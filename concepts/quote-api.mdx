@@ -1,0 +1,366 @@
+---
+title: "Quote API: Fetch Live Prices and Market Data"
+description: "Use QuoteContext to fetch real-time quotes, order book depth, broker queues, intraday lines, candlesticks, option chains, and warrants."
+keywords: ["longbridge", "quote", "QuoteContext", "candlestick", "depth", "brokers", "option chain", "warrant", "intraday", "static info"]
+---
+
+`QuoteContext` is the entry point for all market data operations. It maintains a persistent WebSocket connection to the Longbridge quote server and exposes both pull-based query methods and push-based subscription methods. This page covers the pull methods; for subscriptions see [Real-time subscriptions](/concepts/realtime-subscriptions).
+
+## Creating a QuoteContext
+
+Construct a `QuoteContext` by passing an `Arc<Config>` (Rust) or `Config` (Python, Node.js). In Rust the constructor returns a `(QuoteContext, Receiver<PushEvent>)` tuple; the receiver delivers real-time push events.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from longbridge.openapi import Config, QuoteContext
+
+    config = Config.from_apikey_env()
+    ctx = QuoteContext(config)
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    const { Config, QuoteContext } = require('longbridge');
+
+    const config = Config.fromApikeyEnv();
+    const ctx = QuoteContext.new(config);
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use std::sync::Arc;
+    use longbridge::{Config, QuoteContext};
+
+    let config = Arc::new(Config::from_apikey_env()?);
+    let (ctx, mut receiver) = QuoteContext::new(config);
+    ```
+  </Tab>
+</Tabs>
+
+The context does not connect to the server until the first API call is made.
+
+## Methods
+
+### quote(symbols)
+
+Returns real-time quote data for one or more symbols. Each result includes the last done price, open, high, low, volume, turnover, and market state.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from longbridge.openapi import Config, QuoteContext
+
+    config = Config.from_apikey_env()
+    ctx = QuoteContext(config)
+    resp = ctx.quote(["700.HK", "AAPL.US", "TSLA.US", "NFLX.US"])
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    const { Config, QuoteContext } = require('longbridge');
+
+    async function main() {
+      const config = Config.fromApikeyEnv();
+      const ctx = QuoteContext.new(config);
+      const resp = await ctx.quote(["700.HK", "AAPL.US", "TSLA.US", "NFLX.US"]);
+      for (let obj of resp) {
+        console.log(obj.toString());
+      }
+    }
+
+    main();
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use std::sync::Arc;
+    use longbridge::{Config, QuoteContext};
+
+    #[tokio::main]
+    async fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Arc::new(Config::from_apikey_env()?);
+        let (ctx, _) = QuoteContext::new(config);
+        let resp = ctx
+            .quote(["700.HK", "AAPL.US", "TSLA.US", "NFLX.US"])
+            .await?;
+        println!("{:?}", resp);
+        Ok(())
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### static_info(symbols)
+
+Returns static (non-price) security information: name, exchange, currency, lot size, listing date, and similar fields that change infrequently.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    resp = ctx.static_info(["700.HK", "AAPL.US"])
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    const resp = await ctx.staticInfo(["700.HK", "AAPL.US"]);
+    console.log(resp);
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    let resp = ctx
+        .static_info(["700.HK", "AAPL.US", "TSLA.US", "NFLX.US"])
+        .await?;
+    println!("{:?}", resp);
+    ```
+  </Tab>
+</Tabs>
+
+### depth(symbol)
+
+Returns the current order book depth (level-2 data) for a single symbol, including up to 10 ask levels and 10 bid levels.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    resp = ctx.depth("700.HK")
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    const resp = await ctx.depth("700.HK");
+    console.log(resp);
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    let resp = ctx.depth("700.HK").await?;
+    println!("{:?}", resp);
+    ```
+  </Tab>
+</Tabs>
+
+### brokers(symbol)
+
+Returns the broker queue for a single symbol: broker IDs mapped to each ask and bid price level. Use `participants()` to resolve broker IDs to names.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    resp = ctx.brokers("700.HK")
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    const resp = await ctx.brokers("700.HK");
+    console.log(resp);
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    let resp = ctx.brokers("700.HK").await?;
+    println!("{:?}", resp);
+    ```
+  </Tab>
+</Tabs>
+
+### trades(symbol, count)
+
+Returns up to `count` of the most recent trade ticks for a symbol, including price, volume, direction, and trade conditions.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    resp = ctx.trades("700.HK", 10)
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    const resp = await ctx.trades("700.HK", 10);
+    console.log(resp);
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    let resp = ctx.trades("700.HK", 10).await?;
+    println!("{:?}", resp);
+    ```
+  </Tab>
+</Tabs>
+
+### intraday(symbol, trade_sessions)
+
+Returns the intraday price line for a symbol: a list of one-minute aggregated price/volume points covering today's session.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from longbridge.openapi import TradeSessions
+
+    resp = ctx.intraday("700.HK", TradeSessions.Intraday)
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use longbridge::quote::{QuoteContext, TradeSessions};
+
+    let resp = ctx.intraday("700.HK", TradeSessions::Intraday).await?;
+    println!("{:?}", resp);
+    ```
+  </Tab>
+</Tabs>
+
+### candlesticks(symbol, period, count, adjust_type, trade_sessions)
+
+Returns up to `count` historical candlesticks for the given `period`. Use `AdjustType` to control whether prices are forward-adjusted, backward-adjusted, or unadjusted.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from longbridge.openapi import AdjustType, Period, TradeSessions
+
+    resp = ctx.candlesticks(
+        "700.HK",
+        Period.Day,
+        10,
+        AdjustType.NoAdjust,
+        TradeSessions.Intraday,
+    )
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use longbridge::quote::{AdjustType, Period, TradeSessions};
+
+    let resp = ctx
+        .candlesticks("700.HK", Period::Day, 10, AdjustType::NoAdjust, TradeSessions::Intraday)
+        .await?;
+    println!("{:?}", resp);
+    ```
+  </Tab>
+</Tabs>
+
+Available `Period` values include `OneMinute`, `FiveMinute`, `FifteenMinute`, `ThirtyMinute`, `SixtyMinute`, `Day`, `Week`, `Month`, and `Year`.
+
+### option_chain_expiry_date_list(symbol)
+
+Returns all available expiry dates for the option chain of an underlying symbol. Results are cached for 30 minutes.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    resp = ctx.option_chain_expiry_date_list("AAPL.US")
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    let resp = ctx.option_chain_expiry_date_list("AAPL.US").await?;
+    println!("{:?}", resp);
+    ```
+  </Tab>
+</Tabs>
+
+### option_chain_info_by_date(symbol, expiry_date)
+
+Returns the strike price information for all contracts in an option chain for a given expiry date. Each entry includes the call and put contract symbols and their respective strike prices.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    import datetime
+
+    resp = ctx.option_chain_info_by_date(
+        "AAPL.US",
+        datetime.date(2023, 1, 20),
+    )
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use time::macros::date;
+
+    let resp = ctx
+        .option_chain_info_by_date("AAPL.US", date!(2023 - 01 - 20))
+        .await?;
+    println!("{:?}", resp);
+    ```
+  </Tab>
+</Tabs>
+
+### warrant_list(symbol, sort_by, sort_order, ...)
+
+Returns a filtered and sorted list of warrants for an underlying symbol. Optional parameters let you filter by warrant type, issuer, expiry date range, in/out-of-bounds status, and warrant status.
+
+```rust
+use longbridge::quote::{SortOrderType, WarrantSortBy};
+
+let resp = ctx
+    .warrant_list(
+        "700.HK",
+        WarrantSortBy::LastDone,
+        SortOrderType::Descend,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await?;
+println!("{:?}", resp);
+```
+
+### calc_indexes(symbols, indexes)
+
+Returns calculated financial indexes (e.g. PE ratio, PB ratio, dividend yield, 52-week high/low) for a list of symbols. Pass the specific `CalcIndex` values you want to retrieve.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from longbridge.openapi import CalcIndex
+
+    resp = ctx.calc_indexes(
+        ["700.HK", "AAPL.US"],
+        [CalcIndex.LastDone, CalcIndex.ChangeRate, CalcIndex.Volume],
+    )
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use longbridge::quote::CalcIndex;
+
+    let resp = ctx
+        .calc_indexes(
+            ["700.HK", "AAPL.US"],
+            [CalcIndex::LastDone, CalcIndex::ChangeRate, CalcIndex::Volume],
+        )
+        .await?;
+    println!("{:?}", resp);
+    ```
+  </Tab>
+</Tabs>
+
+## Subscriptions
+
+`QuoteContext` also provides `subscribe`, `unsubscribe`, `subscribe_candlesticks`, and `subscriptions` methods for receiving real-time push events via WebSocket. These are covered in detail on the [Real-time subscriptions](/concepts/realtime-subscriptions) page.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Real-time subscriptions" icon="bolt" href="/concepts/realtime-subscriptions">
+    Subscribe to live quote, depth, broker, and trade tick events.
+  </Card>
+  <Card title="Trade API" icon="arrow-right-arrow-left" href="/concepts/trade-api">
+    Submit and manage orders with TradeContext.
+  </Card>
+</CardGroup>

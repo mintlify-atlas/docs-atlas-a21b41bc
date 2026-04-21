@@ -1,0 +1,270 @@
+---
+title: "Longbridge OpenAPI SDK for Rust"
+description: "Install the Rust SDK, authenticate with OAuth 2.0 or API keys, and stream real-time quotes and trade orders from Longbridge OpenAPI."
+keywords: ["longbridge", "rust", "sdk", "openapi", "quote", "trade", "cargo", "async"]
+---
+
+The `longbridge` crate provides an async-first interface to Longbridge OpenAPI built on Tokio. It requires Rust 1.89.0 or later and supports both OAuth 2.0 and legacy API key authentication. A `blocking` feature flag is available for applications that cannot use async.
+
+<Info>
+  The crate is published on [crates.io](https://crates.io/crates/longbridge). Full API reference is available on [docs.rs](https://docs.rs/longbridge).
+</Info>
+
+## Setup
+
+<Steps>
+  <Step title="Add the dependency">
+    Add `longbridge` to your `Cargo.toml`:
+
+    ```toml Cargo.toml
+    [dependencies]
+    longbridge = "4.0.0"
+    ```
+
+    Or use `cargo add`:
+
+    ```bash
+    cargo add longbridge
+    ```
+  </Step>
+
+  <Step title="Authenticate">
+    The SDK supports two methods. OAuth 2.0 is recommended — no HMAC signatures required and tokens refresh automatically.
+
+    **OAuth 2.0**
+
+    Register an OAuth client to obtain a `client_id`:
+
+    <CodeGroup>
+
+    ```bash macOS / Linux
+    curl -X POST https://openapi.longbridge.com/oauth2/register \
+      -H "Content-Type: application/json" \
+      -d '{
+        "client_name": "My Application",
+        "redirect_uris": ["http://localhost:60355/callback"],
+        "grant_types": ["authorization_code", "refresh_token"]
+      }'
+    ```
+
+    ```powershell Windows
+    Invoke-RestMethod -Method Post -Uri https://openapi.longbridge.com/oauth2/register `
+      -ContentType "application/json" `
+      -Body '{
+        "client_name": "My Application",
+        "redirect_uris": ["http://localhost:60355/callback"],
+        "grant_types": ["authorization_code", "refresh_token"]
+      }'
+    ```
+
+    </CodeGroup>
+
+    The response contains your `client_id`. Pass it to `OAuthBuilder`:
+
+    ```rust
+    use std::sync::Arc;
+    use longbridge::{Config, oauth::OAuthBuilder};
+
+    #[tokio::main]
+    async fn main() -> Result<(), Box<dyn std::error::Error>> {
+        // Loads a cached token from ~/.longbridge/openapi/tokens/<client_id>.
+        // Opens a browser authorization flow if no valid token exists.
+        let oauth = OAuthBuilder::new("your-client-id")
+            .build(|url| println!("Open this URL to authorize: {url}"))
+            .await?;
+
+        let config = Arc::new(Config::from_oauth(oauth));
+        // Use config to create contexts...
+        Ok(())
+    }
+    ```
+
+    **Legacy API key**
+
+    Set three environment variables from your Longbridge user center:
+
+    <CodeGroup>
+
+    ```bash macOS / Linux
+    export LONGBRIDGE_APP_KEY="App Key get from user center"
+    export LONGBRIDGE_APP_SECRET="App Secret get from user center"
+    export LONGBRIDGE_ACCESS_TOKEN="Access Token get from user center"
+    ```
+
+    ```powershell Windows
+    setx LONGBRIDGE_APP_KEY "App Key get from user center"
+    setx LONGBRIDGE_APP_SECRET "App Secret get from user center"
+    setx LONGBRIDGE_ACCESS_TOKEN "Access Token get from user center"
+    ```
+
+    </CodeGroup>
+
+    Then load them with `Config::from_apikey_env()`:
+
+    ```rust
+    use std::sync::Arc;
+    use longbridge::Config;
+
+    let config = Arc::new(Config::from_apikey_env()?);
+    ```
+  </Step>
+</Steps>
+
+## Quote API — fetch quotes
+
+Call `QuoteContext::quote` with a list of symbols to retrieve current price data.
+
+<CodeGroup>
+
+```rust OAuth 2.0
+use std::sync::Arc;
+use longbridge::{Config, QuoteContext, oauth::OAuthBuilder};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let oauth = OAuthBuilder::new("your-client-id")
+        .build(|url| println!("Open this URL to authorize: {url}"))
+        .await?;
+    let config = Arc::new(Config::from_oauth(oauth));
+
+    let (ctx, _) = QuoteContext::new(config);
+
+    let resp = ctx
+        .quote(["700.HK", "AAPL.US", "TSLA.US", "NFLX.US"])
+        .await?;
+    println!("{:?}", resp);
+
+    Ok(())
+}
+```
+
+```rust Legacy API key
+use std::sync::Arc;
+use longbridge::{Config, QuoteContext};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = Arc::new(Config::from_apikey_env()?);
+
+    let (ctx, _) = QuoteContext::new(config.clone());
+
+    let resp = ctx
+        .quote(["700.HK", "AAPL.US", "TSLA.US", "NFLX.US"])
+        .await?;
+    println!("{:?}", resp);
+
+    Ok(())
+}
+```
+
+</CodeGroup>
+
+## Quote API — subscribe to push events
+
+`QuoteContext::new` returns both a context and an async receiver channel. Subscribe to a symbol, then loop over the channel to receive push events.
+
+```rust
+use std::sync::Arc;
+use longbridge::{quote::SubFlags, Config, QuoteContext};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = Arc::new(Config::from_apikey_env()?);
+
+    let (ctx, mut receiver) = QuoteContext::new(config);
+
+    ctx.subscribe(["700.HK"], SubFlags::QUOTE).await?;
+
+    while let Some(event) = receiver.recv().await {
+        println!("{:?}", event);
+    }
+
+    Ok(())
+}
+```
+
+<Note>
+  Keep the receiver loop running to continue receiving push events. If the process exits, the WebSocket connection closes and no further events are delivered.
+</Note>
+
+## Trade API — submit an order
+
+Use `TradeContext` to place orders. The `decimal!` macro creates exact decimal values for price and quantity fields.
+
+```rust
+use std::sync::Arc;
+use longbridge::{
+    decimal,
+    trade::{OrderSide, OrderType, SubmitOrderOptions, TimeInForceType},
+    Config, TradeContext,
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = Arc::new(Config::from_apikey_env()?);
+
+    let (ctx, _) = TradeContext::new(config);
+
+    let opts = SubmitOrderOptions::new(
+        "700.HK",
+        OrderType::LO,
+        OrderSide::Buy,
+        decimal!(500),
+        TimeInForceType::Day,
+    )
+    .submitted_price(decimal!(50i32))
+    .remark("Hello from Rust SDK".to_string());
+
+    let resp = ctx.submit_order(opts).await?;
+    println!("{:?}", resp);
+
+    Ok(())
+}
+```
+
+## Crate features
+
+All features are disabled by default to avoid compiling unused dependencies.
+
+| Feature | Description |
+|---------|-------------|
+| `blocking` | Provides a synchronous blocking client API. |
+
+Enable a feature in `Cargo.toml`:
+
+```toml Cargo.toml
+[dependencies]
+longbridge = { version = "4.0.0", features = ["blocking"] }
+```
+
+## Environment variable reference
+
+| Variable | Description |
+|----------|-------------|
+| `LONGBRIDGE_APP_KEY` | App Key from user center |
+| `LONGBRIDGE_APP_SECRET` | App Secret from user center |
+| `LONGBRIDGE_ACCESS_TOKEN` | Access Token from user center |
+| `LONGBRIDGE_LANGUAGE` | Response language: `zh-CN`, `zh-HK`, or `en` (default: `en`) |
+| `LONGBRIDGE_HTTP_URL` | HTTP endpoint (default: `https://openapi.longbridge.com`) |
+| `LONGBRIDGE_QUOTE_WS_URL` | Quote WebSocket endpoint (default: `wss://openapi-quote.longbridge.com/v2`) |
+| `LONGBRIDGE_TRADE_WS_URL` | Trade WebSocket endpoint (default: `wss://openapi-trade.longbridge.com/v2`) |
+| `LONGBRIDGE_ENABLE_OVERNIGHT` | Enable overnight quotes: `true` or `false` (default: `false`) |
+| `LONGBRIDGE_PUSH_CANDLESTICK_MODE` | Candlestick push mode: `realtime` or `confirmed` (default: `realtime`) |
+| `LONGBRIDGE_LOG_PATH` | Path for SDK log files (default: no logs) |
+
+## Troubleshooting
+
+- On Windows, `setx` requires opening a new terminal. Use `set` to apply variables in the current `cmd.exe` session.
+- If you do not see push events, ensure the receiver loop keeps the process alive.
+- Set `LONGBRIDGE_LOG_PATH` to a writable directory to enable SDK debug logs.
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="crates.io" icon="box" href="https://crates.io/crates/longbridge">
+    Published package and version history.
+  </Card>
+  <Card title="docs.rs" icon="book" href="https://docs.rs/longbridge">
+    Full API reference generated from source.
+  </Card>
+</CardGroup>

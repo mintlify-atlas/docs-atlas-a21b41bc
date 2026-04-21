@@ -1,0 +1,164 @@
+---
+title: "Authentication: OAuth 2.0 and API Key Setup Guide"
+description: "Configure OAuth 2.0 bearer token auth or legacy API key credentials to authenticate your Longbridge OpenAPI SDK requests across all supported languages."
+keywords: ["longbridge", "authentication", "oauth2", "api key", "access token", "credentials"]
+---
+
+The Longbridge OpenAPI SDK supports two authentication methods. OAuth 2.0 is the recommended approach — it uses Bearer tokens, requires no per-request HMAC signature, and manages token refresh automatically. The legacy API key method is still fully supported for backward compatibility.
+
+<Warning>
+  A 401 or 403 response means your credentials are incorrect or have expired. Double-check that `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN` are set correctly, or that your OAuth token has not been revoked.
+</Warning>
+
+## OAuth 2.0 (recommended)
+
+OAuth 2.0 tokens are persisted at `~/.longbridge/openapi/tokens/<client_id>` (or `%USERPROFILE%\.longbridge\openapi\tokens\<client_id>` on Windows) and refreshed transparently on every request. You only need to complete the browser authorization flow once per client.
+
+<Steps>
+  <Step title="Register an OAuth client">
+    Call the registration endpoint to receive your `client_id`. No secret is returned — the public client flow does not require one.
+
+    <CodeGroup>
+
+    ```bash macOS / Linux
+    curl -X POST https://openapi.longbridge.com/oauth2/register \
+      -H "Content-Type: application/json" \
+      -d '{
+        "client_name": "My Application",
+        "redirect_uris": ["http://localhost:60355/callback"],
+        "grant_types": ["authorization_code", "refresh_token"]
+      }'
+    ```
+
+    ```powershell Windows
+    Invoke-RestMethod -Method Post -Uri https://openapi.longbridge.com/oauth2/register `
+      -ContentType "application/json" `
+      -Body '{
+        "client_name": "My Application",
+        "redirect_uris": ["http://localhost:60355/callback"],
+        "grant_types": ["authorization_code", "refresh_token"]
+      }'
+    ```
+
+    </CodeGroup>
+
+    The response contains your `client_id`:
+
+    ```json
+    {
+      "client_id": "your-client-id-here",
+      "client_secret": null,
+      "client_name": "My Application",
+      "redirect_uris": ["http://localhost:60355/callback"]
+    }
+    ```
+
+    Save the `client_id` — you will pass it to the SDK on every startup.
+  </Step>
+
+  <Step title="Build an OAuth handle and create Config">
+    Pass your `client_id` to the SDK's OAuth builder. On first run the SDK opens a browser authorization URL; on subsequent runs it loads and refreshes the cached token automatically.
+
+    <Tabs>
+      <Tab title="Python">
+        ```python
+        from longbridge.openapi import OAuthBuilder, Config
+
+        oauth = OAuthBuilder("your-client-id").build(
+            lambda url: print(f"Open this URL to authorize: {url}")
+        )
+        config = Config.from_oauth(oauth)
+        ```
+      </Tab>
+      <Tab title="Node.js">
+        ```javascript
+        const { OAuth, Config } = require('longbridge');
+
+        async function main() {
+          const oauth = await OAuth.build(
+            "your-client-id",
+            (_, url) => console.log("Open this URL to authorize: " + url)
+          );
+          const config = Config.fromOAuth(oauth);
+          // Use config to create contexts...
+        }
+
+        main();
+        ```
+      </Tab>
+      <Tab title="Rust">
+        ```rust
+        use std::sync::Arc;
+        use longbridge::{Config, oauth::OAuthBuilder};
+
+        #[tokio::main]
+        async fn main() -> Result<(), Box<dyn std::error::Error>> {
+            let oauth = OAuthBuilder::new("your-client-id")
+                .build(|url| println!("Open this URL to authorize: {url}"))
+                .await?;
+            let config = Arc::new(Config::from_oauth(oauth));
+            // Use config to create contexts...
+            Ok(())
+        }
+        ```
+      </Tab>
+      <Tab title="Java">
+        ```java
+        import com.longbridge.*;
+
+        class Main {
+            public static void main(String[] args) throws Exception {
+                try (OAuth oauth = new OAuthBuilder("your-client-id")
+                        .build(url -> System.out.println("Open this URL to authorize: " + url))
+                        .get();
+                     Config config = Config.fromOAuth(oauth)) {
+                    // Use config to create contexts...
+                }
+            }
+        }
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+</Steps>
+
+## Legacy API key
+
+Set three environment variables from your Longbridge user center, then call `Config.from_apikey_env()` (or the equivalent in your language) to load them.
+
+<CodeGroup>
+
+```bash macOS / Linux
+export LONGBRIDGE_APP_KEY="App Key get from user center"
+export LONGBRIDGE_APP_SECRET="App Secret get from user center"
+export LONGBRIDGE_ACCESS_TOKEN="Access Token get from user center"
+```
+
+```powershell Windows
+setx LONGBRIDGE_APP_KEY "App Key get from user center"
+setx LONGBRIDGE_APP_SECRET "App Secret get from user center"
+setx LONGBRIDGE_ACCESS_TOKEN "Access Token get from user center"
+```
+
+</CodeGroup>
+
+<Note>
+  On Windows, `setx` writes to the registry and requires opening a new terminal session before the variables take effect. Use `set` instead if you only need them in the current `cmd.exe` session.
+</Note>
+
+## Environment variable reference
+
+All environment variables are optional except the three credentials required by the legacy API key method. OAuth 2.0 does not require any of these variables — the token is managed by the SDK.
+
+| Name | Description |
+|------|-------------|
+| `LONGBRIDGE_APP_KEY` | App Key from user center |
+| `LONGBRIDGE_APP_SECRET` | App Secret from user center |
+| `LONGBRIDGE_ACCESS_TOKEN` | Access Token from user center |
+| `LONGBRIDGE_LANGUAGE` | Language for API responses: `zh-CN`, `zh-HK`, or `en` (default: `en`) |
+| `LONGBRIDGE_HTTP_URL` | HTTP endpoint (default: `https://openapi.longbridge.com`) |
+| `LONGBRIDGE_QUOTE_WS_URL` | Quote WebSocket endpoint (default: `wss://openapi-quote.longbridge.com/v2`) |
+| `LONGBRIDGE_TRADE_WS_URL` | Trade WebSocket endpoint (default: `wss://openapi-trade.longbridge.com/v2`) |
+| `LONGBRIDGE_ENABLE_OVERNIGHT` | Enable overnight quotes: `true` or `false` (default: `false`) |
+| `LONGBRIDGE_PUSH_CANDLESTICK_MODE` | Candlestick push mode: `realtime` or `confirmed` (default: `realtime`) |
+| `LONGBRIDGE_LOG_PATH` | Path for SDK log files (default: no logs) |

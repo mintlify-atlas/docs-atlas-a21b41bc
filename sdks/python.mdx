@@ -1,0 +1,234 @@
+---
+title: "Longbridge OpenAPI SDK for Python"
+description: "Install the Python SDK, authenticate with OAuth 2.0 or API keys, and fetch real-time quotes and submit orders synchronously or with asyncio."
+keywords: ["longbridge", "python", "sdk", "openapi", "asyncio", "quote", "trade", "pip"]
+---
+
+The `longbridge` Python package wraps the native Rust extension via PyO3, giving you both a synchronous API and a full `asyncio` interface. It requires Python 3.8 or later and supports OAuth 2.0 and legacy API key authentication.
+
+<Info>
+  Full API reference is available at [longbridge.github.io/openapi/python](https://longbridge.github.io/openapi/python/index.html).
+</Info>
+
+## Setup
+
+<Steps>
+  <Step title="Install the package">
+    ```bash
+    pip install longbridge
+    ```
+  </Step>
+
+  <Step title="Authenticate">
+    The SDK supports two methods. OAuth 2.0 is recommended — no HMAC signatures required and tokens refresh automatically.
+
+    **OAuth 2.0**
+
+    Register an OAuth client to obtain a `client_id`:
+
+    <CodeGroup>
+
+    ```bash macOS / Linux
+    curl -X POST https://openapi.longbridge.com/oauth2/register \
+      -H "Content-Type: application/json" \
+      -d '{
+        "client_name": "My Application",
+        "redirect_uris": ["http://localhost:60355/callback"],
+        "grant_types": ["authorization_code", "refresh_token"]
+      }'
+    ```
+
+    ```powershell Windows
+    Invoke-RestMethod -Method Post -Uri https://openapi.longbridge.com/oauth2/register `
+      -ContentType "application/json" `
+      -Body '{
+        "client_name": "My Application",
+        "redirect_uris": ["http://localhost:60355/callback"],
+        "grant_types": ["authorization_code", "refresh_token"]
+      }'
+    ```
+
+    </CodeGroup>
+
+    The response contains your `client_id`. Pass it to `OAuthBuilder`. On first run the SDK opens a browser authorization page; on subsequent runs it loads and refreshes the cached token from `~/.longbridge/openapi/tokens/<client_id>` automatically.
+
+    <CodeGroup>
+
+    ```python Synchronous
+    from longbridge.openapi import OAuthBuilder, Config
+
+    oauth = OAuthBuilder("your-client-id").build(
+        lambda url: print(f"Open this URL to authorize: {url}")
+    )
+    config = Config.from_oauth(oauth)
+    ```
+
+    ```python Async
+    import asyncio
+    from longbridge.openapi import OAuthBuilder, Config
+
+    async def main():
+        oauth = await OAuthBuilder("your-client-id").build_async(
+            lambda url: print(f"Open this URL to authorize: {url}")
+        )
+        config = Config.from_oauth(oauth)
+
+    asyncio.run(main())
+    ```
+
+    </CodeGroup>
+
+    **Legacy API key**
+
+    Set three environment variables from your Longbridge user center:
+
+    <CodeGroup>
+
+    ```bash macOS / Linux
+    export LONGBRIDGE_APP_KEY="App Key get from user center"
+    export LONGBRIDGE_APP_SECRET="App Secret get from user center"
+    export LONGBRIDGE_ACCESS_TOKEN="Access Token get from user center"
+    ```
+
+    ```powershell Windows
+    setx LONGBRIDGE_APP_KEY "App Key get from user center"
+    setx LONGBRIDGE_APP_SECRET "App Secret get from user center"
+    setx LONGBRIDGE_ACCESS_TOKEN "Access Token get from user center"
+    ```
+
+    </CodeGroup>
+
+    Then load them with `Config.from_apikey_env()`:
+
+    ```python
+    from longbridge.openapi import Config
+
+    config = Config.from_apikey_env()
+    ```
+  </Step>
+</Steps>
+
+## Quote API — fetch quotes
+
+Pass a list of symbols to `QuoteContext.quote` to retrieve current price data.
+
+```python
+from longbridge.openapi import Config, QuoteContext, OAuthBuilder
+
+oauth = OAuthBuilder("your-client-id").build(
+    lambda url: print(f"Open this URL to authorize: {url}")
+)
+config = Config.from_oauth(oauth)
+
+ctx = QuoteContext(config)
+
+resp = ctx.quote(["700.HK", "AAPL.US", "TSLA.US", "NFLX.US"])
+print(resp)
+```
+
+## Quote API — subscribe to push events
+
+Register a callback with `set_on_quote`, then call `subscribe`. Keep the process alive to continue receiving events.
+
+```python
+from time import sleep
+from longbridge.openapi import Config, QuoteContext, SubType, PushQuote, OAuthBuilder
+
+oauth = OAuthBuilder("your-client-id").build(
+    lambda url: print(f"Open this URL to authorize: {url}")
+)
+config = Config.from_oauth(oauth)
+
+def on_quote(symbol: str, event: PushQuote):
+    print(symbol, event)
+
+ctx = QuoteContext(config)
+ctx.set_on_quote(on_quote)
+
+ctx.subscribe(["700.HK"], [SubType.Quote])
+
+# Receive push events for 30 seconds
+sleep(30)
+```
+
+<Note>
+  If the process exits, the WebSocket connection closes and no further events are delivered. Use `sleep` or another blocking mechanism to keep the process running.
+</Note>
+
+## Trade API — submit an order
+
+```python
+from decimal import Decimal
+from longbridge.openapi import TradeContext, Config, OrderType, OrderSide, TimeInForceType, OAuthBuilder
+
+oauth = OAuthBuilder("your-client-id").build(
+    lambda url: print(f"Open this URL to authorize: {url}")
+)
+config = Config.from_oauth(oauth)
+
+ctx = TradeContext(config)
+
+resp = ctx.submit_order(
+    "700.HK", OrderType.LO, OrderSide.Buy,
+    Decimal("500"), TimeInForceType.Day,
+    submitted_price=Decimal("50"),
+    remark="Hello from Python SDK",
+)
+print(resp)
+```
+
+## Async API
+
+The SDK provides `AsyncQuoteContext` and `AsyncTradeContext` for use with `asyncio`. All I/O methods return awaitables. Create contexts synchronously (no `await` at construction time), then use `await` for calls.
+
+```python
+import asyncio
+from longbridge.openapi import Config, AsyncQuoteContext, SubType, PushQuote, OAuthBuilder
+
+def on_quote(symbol: str, event: PushQuote):
+    print(symbol, event)
+
+async def main():
+    oauth = await OAuthBuilder("your-client-id").build_async(
+        lambda url: print(f"Open this URL to authorize: {url}")
+    )
+    config = Config.from_oauth(oauth)
+    ctx = AsyncQuoteContext.create(config, loop_=asyncio.get_running_loop())
+    ctx.set_on_quote(on_quote)
+    await ctx.subscribe(["700.HK", "AAPL.US"], [SubType.Quote])
+    quotes = await ctx.quote(["700.HK"])
+    print(quotes)
+    await asyncio.sleep(10)
+
+asyncio.run(main())
+```
+
+<Note>
+  When using async callbacks (callbacks that are themselves `async def` functions), pass `loop_=asyncio.get_running_loop()` when creating the context so the SDK can schedule coroutines on the correct event loop.
+</Note>
+
+| Async class | Factory method | Example call |
+|-------------|---------------|--------------|
+| `AsyncQuoteContext` | `AsyncQuoteContext.create(config)` | `await ctx.quote(["700.HK"])` |
+| `AsyncTradeContext` | `AsyncTradeContext.create(config)` | `await ctx.submit_order(...)` |
+
+## Environment variable reference
+
+| Variable | Description |
+|----------|-------------|
+| `LONGBRIDGE_APP_KEY` | App Key from user center |
+| `LONGBRIDGE_APP_SECRET` | App Secret from user center |
+| `LONGBRIDGE_ACCESS_TOKEN` | Access Token from user center |
+| `LONGBRIDGE_LANGUAGE` | Response language: `zh-CN`, `zh-HK`, or `en` (default: `en`) |
+| `LONGBRIDGE_HTTP_URL` | HTTP endpoint (default: `https://openapi.longbridge.com`) |
+| `LONGBRIDGE_QUOTE_WS_URL` | Quote WebSocket endpoint (default: `wss://openapi-quote.longbridge.com/v2`) |
+| `LONGBRIDGE_TRADE_WS_URL` | Trade WebSocket endpoint (default: `wss://openapi-trade.longbridge.com/v2`) |
+| `LONGBRIDGE_ENABLE_OVERNIGHT` | Enable overnight quotes: `true` or `false` (default: `false`) |
+| `LONGBRIDGE_PUSH_CANDLESTICK_MODE` | Candlestick push mode: `realtime` or `confirmed` (default: `realtime`) |
+| `LONGBRIDGE_LOG_PATH` | Path for SDK log files (default: no logs) |
+
+## Troubleshooting
+
+- On Windows, `setx` requires opening a new terminal. Use `set` to apply variables in the current `cmd.exe` session.
+- If you do not see push events, keep the process alive with `sleep` or an event loop.
+- Set `LONGBRIDGE_LOG_PATH` to a writable directory to enable SDK debug logs.

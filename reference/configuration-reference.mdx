@@ -1,0 +1,198 @@
+---
+title: "Configuration Reference: Environment Variables and Methods"
+description: "All environment variables, Config builder methods, and programmatic setters for the Longbridge OpenAPI SDK, with defaults and usage notes."
+keywords: ["longbridge", "configuration", "environment variables", "config", "sdk settings"]
+---
+
+The SDK resolves configuration from two sources: environment variables (or a `.env` file in the working directory) and programmatic builder methods on the `Config` struct. Builder methods take precedence over environment variables when both are set. All constructors call `dotenv::dotenv()` automatically, so a `.env` file in the current directory is always picked up.
+
+<Note>
+  The SDK also accepts `LONGPORT_*` as an alias prefix for every `LONGBRIDGE_*` variable, for backward compatibility. The `LONGBRIDGE_*` name is preferred.
+</Note>
+
+## Constructors
+
+Use one of three constructors to create a `Config`. All of them read the optional environment variables listed below automatically.
+
+<AccordionGroup>
+  <Accordion title="Config::from_apikey(app_key, app_secret, access_token)">
+    Creates a `Config` using API Key (HMAC-SHA256) authentication. Pass your credentials directly as string arguments. All optional environment variables are applied on top.
+
+    ```rust
+    use longbridge::Config;
+
+    let config = Config::from_apikey(
+        "your-app-key",
+        "your-app-secret",
+        "your-access-token",
+    );
+    ```
+  </Accordion>
+
+  <Accordion title="Config::from_apikey_env() -> Result<Config>">
+    Reads `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN` from the environment. Returns an error if any of the three required variables are missing.
+
+    ```rust
+    use longbridge::Config;
+
+    let config = Config::from_apikey_env()?;
+    ```
+  </Accordion>
+
+  <Accordion title="Config::from_oauth(oauth)">
+    Creates a `Config` using OAuth 2.0 authentication. Obtain an `OAuth` handle first via `OAuthBuilder`. Tokens are persisted at `~/.longbridge/openapi/tokens/<client_id>` and refreshed automatically.
+
+    ```rust
+    use std::sync::Arc;
+    use longbridge::{Config, oauth::OAuthBuilder};
+
+    let oauth = OAuthBuilder::new("your-client-id")
+        .build(|url| println!("Open this URL to authorize: {url}"))
+        .await?;
+    let config = Arc::new(Config::from_oauth(oauth));
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Environment variables
+
+All variables below are optional unless noted. The SDK reads them at construction time; changing them after `Config` is created has no effect.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LONGBRIDGE_APP_KEY` | — | App Key from user center. **Required** for `from_apikey_env()`. |
+| `LONGBRIDGE_APP_SECRET` | — | App Secret from user center. **Required** for `from_apikey_env()`. |
+| `LONGBRIDGE_ACCESS_TOKEN` | — | Access Token from user center. **Required** for `from_apikey_env()`. |
+| `LONGBRIDGE_LANGUAGE` | `en` | Language for API responses. Accepts `zh-CN`, `zh-HK`, or `en`. |
+| `LONGBRIDGE_HTTP_URL` | `https://openapi.longbridge.com` | HTTP REST endpoint URL. |
+| `LONGBRIDGE_QUOTE_WS_URL` | `wss://openapi-quote.longbridge.com/v2` | Quote WebSocket endpoint URL. Auto-switches to the CN endpoint for CN-region users when unset. |
+| `LONGBRIDGE_TRADE_WS_URL` | `wss://openapi-trade.longbridge.com/v2` | Trade WebSocket endpoint URL. Auto-switches to the CN endpoint for CN-region users when unset. |
+| `LONGBRIDGE_ENABLE_OVERNIGHT` | `false` | Set to `true` to enable overnight quote data. |
+| `LONGBRIDGE_PUSH_CANDLESTICK_MODE` | `realtime` | Candlestick push mode. `realtime` pushes every tick; `confirmed` pushes only on bar close. |
+| `LONGBRIDGE_PRINT_QUOTE_PACKAGES` | `true` | Set to `false` to suppress the quote package summary printed on WebSocket connect. |
+| `LONGBRIDGE_LOG_PATH` | _(no logs)_ | Directory path for rolling daily log files. Logs rotate at midnight with a `.log` suffix. |
+
+## Builder methods
+
+Each method returns `Self`, so they can be chained. These override the corresponding environment variable.
+
+<AccordionGroup>
+  <Accordion title=".http_url(url)">
+    Sets the HTTP REST endpoint URL.
+
+    ```rust
+    let config = Config::from_apikey_env()?
+        .http_url("https://openapi.longbridge.com");
+    ```
+
+    **Default:** `https://openapi.longbridge.com`
+  </Accordion>
+
+  <Accordion title=".quote_ws_url(url)">
+    Sets the Quote WebSocket endpoint URL.
+
+    ```rust
+    let config = Config::from_apikey_env()?
+        .quote_ws_url("wss://openapi-quote.longbridge.com/v2");
+    ```
+
+    **Default:** `wss://openapi-quote.longbridge.com/v2` (or CN equivalent)
+  </Accordion>
+
+  <Accordion title=".trade_ws_url(url)">
+    Sets the Trade WebSocket endpoint URL.
+
+    ```rust
+    let config = Config::from_apikey_env()?
+        .trade_ws_url("wss://openapi-trade.longbridge.com/v2");
+    ```
+
+    **Default:** `wss://openapi-trade.longbridge.com/v2` (or CN equivalent)
+  </Accordion>
+
+  <Accordion title=".language(language)">
+    Sets the language for API responses. Affects error messages and field text returned by the server.
+
+    ```rust
+    use longbridge::{Config, Language};
+
+    let config = Config::from_apikey_env()?
+        .language(Language::ZH_HK);
+    ```
+
+    Accepted values: `Language::EN`, `Language::ZH_CN`, `Language::ZH_HK`. **Default:** `Language::EN`.
+  </Accordion>
+
+  <Accordion title=".enable_overnight()">
+    Enables overnight quote data for supported markets.
+
+    ```rust
+    let config = Config::from_apikey_env()?
+        .enable_overnight();
+    ```
+
+    **Default:** disabled.
+  </Accordion>
+
+  <Accordion title=".push_candlestick_mode(mode)">
+    Controls when candlestick push events are emitted.
+
+    ```rust
+    use longbridge::{Config, PushCandlestickMode};
+
+    let config = Config::from_apikey_env()?
+        .push_candlestick_mode(PushCandlestickMode::Confirmed);
+    ```
+
+    `PushCandlestickMode::Realtime` — push on every tick (default).  
+    `PushCandlestickMode::Confirmed` — push only when the bar closes.
+  </Accordion>
+
+  <Accordion title=".dont_print_quote_packages()">
+    Suppresses the quote package summary that is printed when the WebSocket connects.
+
+    ```rust
+    let config = Config::from_apikey_env()?
+        .dont_print_quote_packages();
+    ```
+  </Accordion>
+
+  <Accordion title=".log_path(path)">
+    Sets the directory where the SDK writes rolling daily log files. Each file is named with a `.log` suffix and rotated at midnight.
+
+    ```rust
+    let config = Config::from_apikey_env()?
+        .log_path("/var/log/longbridge");
+    ```
+
+    **Default:** no log files are written.
+  </Accordion>
+
+  <Accordion title=".header(key, value)">
+    Injects a custom HTTP header into every HTTP request and WebSocket upgrade request. Can be called multiple times to add multiple headers.
+
+    ```rust
+    let config = Config::from_apikey_env()?
+        .header("X-Request-Source", "my-app");
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## In-place mutation methods
+
+These `set_*` methods mutate an existing `Config` value in place. Use them when you need to update configuration after initial construction (for example, after a late config reload).
+
+| Method | Description |
+|--------|-------------|
+| `set_http_url(url)` | Updates the HTTP endpoint URL. |
+| `set_quote_ws_url(url)` | Updates the Quote WebSocket URL. |
+| `set_trade_ws_url(url)` | Updates the Trade WebSocket URL. |
+| `set_language(language)` | Updates the response language. |
+| `set_enable_overnight()` | Enables overnight quotes. |
+| `set_push_candlestick_mode(mode)` | Updates the candlestick push mode. |
+| `set_dont_print_quote_packages()` | Disables quote package printing. |
+| `set_log_path(path)` | Updates the log directory path. |
+
+## CN region auto-detection
+
+When `LONGBRIDGE_QUOTE_WS_URL` and `LONGBRIDGE_TRADE_WS_URL` are not set, the SDK probes a geo-detection endpoint at connect time to determine whether the client is in the CN region. CN-region clients are routed to `wss://openapi-quote.longbridge.cn/v2` and `wss://openapi-trade.longbridge.cn/v2` automatically. Set the endpoint variables explicitly if you need to override this behavior.

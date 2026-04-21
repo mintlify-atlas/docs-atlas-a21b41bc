@@ -1,0 +1,225 @@
+---
+title: "SDK Configuration: Config Object and Options"
+description: "Create a Config from OAuth or environment variables, then use builder methods to control language, endpoints, and candlestick push mode."
+keywords: ["longbridge", "config", "oauth", "api key", "environment variables", "configuration", "language", "overnight", "candlestick"]
+---
+
+The `Config` object is the single entry point for all SDK authentication and connection settings. Every context — `QuoteContext`, `TradeContext`, and `AssetContext` — accepts an `Arc<Config>` (Rust) or a `Config` instance (Python, Node.js) and derives its HTTP client and WebSocket connections from it. You create a `Config` once, wrap it in `Arc` if needed, and pass it to each context you create.
+
+## Construction methods
+
+### From OAuth credentials
+
+OAuth 2.0 is the recommended authentication method. It uses Bearer tokens without requiring per-request HMAC signatures. Tokens are loaded from disk, refreshed transparently, and persisted automatically.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from longbridge.openapi import OAuthBuilder, Config
+
+    oauth = OAuthBuilder("your-client-id").build(
+        lambda url: print(f"Open this URL to authorize: {url}")
+    )
+    config = Config.from_oauth(oauth)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use std::sync::Arc;
+    use longbridge::{Config, oauth::OAuthBuilder};
+
+    #[tokio::main]
+    async fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let oauth = OAuthBuilder::new("your-client-id")
+            .build(|url| println!("Open this URL to authorize: {url}"))
+            .await?;
+        let config = Arc::new(Config::from_oauth(oauth));
+        Ok(())
+    }
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    const { OAuth, Config } = require('longbridge');
+
+    async function main() {
+      const oauth = await OAuth.build(
+        "your-client-id",
+        (_, url) => console.log("Open this URL to authorize: " + url)
+      );
+      const config = Config.fromOAuth(oauth);
+    }
+
+    main();
+    ```
+  </Tab>
+</Tabs>
+
+### From environment variables
+
+`from_apikey_env` (Rust/Python) / `Config.fromApikeyEnv()` (Node.js) reads three required variables and several optional ones from the environment or a `.env` file in the working directory.
+
+**Required variables:**
+
+| Variable | Description |
+|---|---|
+| `LONGBRIDGE_APP_KEY` | App key from user center |
+| `LONGBRIDGE_APP_SECRET` | App secret from user center |
+| `LONGBRIDGE_ACCESS_TOKEN` | Access token from user center |
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from longbridge.openapi import Config
+
+    config = Config.from_apikey_env()
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use std::sync::Arc;
+    use longbridge::Config;
+
+    let config = Arc::new(Config::from_apikey_env()?);
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    const { Config } = require('longbridge');
+    const config = Config.fromApikeyEnv();
+    ```
+  </Tab>
+</Tabs>
+
+### From explicit API key values
+
+Use `Config::from_apikey` (Rust) or `Config.from_apikey` (Python) when you want to supply credentials directly rather than reading from the environment.
+
+```rust
+use longbridge::Config;
+
+let config = Config::from_apikey("app-key", "app-secret", "access-token");
+```
+
+Optional environment variables are still read from the environment or `.env` file when using this constructor.
+
+## Optional environment variables
+
+These variables are read automatically by all three constructors:
+
+| Variable | Default | Description |
+|---|---|---|
+| `LONGBRIDGE_LANGUAGE` | `en` | Response language: `zh-CN`, `zh-HK`, or `en` |
+| `LONGBRIDGE_HTTP_URL` | `https://openapi.longbridge.com` | HTTP endpoint URL |
+| `LONGBRIDGE_QUOTE_WS_URL` | `wss://openapi-quote.longbridge.com/v2` | Quote WebSocket URL |
+| `LONGBRIDGE_TRADE_WS_URL` | `wss://openapi-trade.longbridge.com/v2` | Trade WebSocket URL |
+| `LONGBRIDGE_ENABLE_OVERNIGHT` | `false` | Enable overnight quote data |
+| `LONGBRIDGE_PUSH_CANDLESTICK_MODE` | `realtime` | Candlestick push mode: `realtime` or `confirmed` |
+| `LONGBRIDGE_PRINT_QUOTE_PACKAGES` | `true` | Print active quote packages on connect |
+| `LONGBRIDGE_LOG_PATH` | _(none)_ | Directory for rolling log files |
+
+## Builder methods
+
+After construction, `Config` exposes builder methods that return a new `Config` with the given field overridden. These are chainable in Rust.
+
+<AccordionGroup>
+  <Accordion title="language(language)">
+    Sets the language for API responses. Affects both HTTP responses and WebSocket push payloads.
+
+    ```rust
+    use longbridge::{Config, Language};
+
+    let config = Config::from_apikey_env()?
+        .language(Language::ZH_HK);
+    ```
+
+    Available values: `Language::EN` (default), `Language::ZH_CN`, `Language::ZH_HK`.
+  </Accordion>
+
+  <Accordion title="http_url(url)">
+    Overrides the HTTP API endpoint. You rarely need to change this; it is used primarily for China-region routing.
+
+    ```rust
+    let config = Config::from_apikey_env()?
+        .http_url("https://openapi.longbridge.cn");
+    ```
+  </Accordion>
+
+  <Accordion title="quote_ws_url(url)">
+    Overrides the quote WebSocket endpoint.
+
+    ```rust
+    let config = Config::from_apikey_env()?
+        .quote_ws_url("wss://openapi-quote.longbridge.cn/v2");
+    ```
+  </Accordion>
+
+  <Accordion title="trade_ws_url(url)">
+    Overrides the trade WebSocket endpoint.
+
+    ```rust
+    let config = Config::from_apikey_env()?
+        .trade_ws_url("wss://openapi-trade.longbridge.cn/v2");
+    ```
+  </Accordion>
+
+  <Accordion title="enable_overnight()">
+    Enables overnight quote data. When set, the SDK requests extended-hours market data where available.
+
+    ```rust
+    let config = Config::from_apikey_env()?
+        .enable_overnight();
+    ```
+  </Accordion>
+
+  <Accordion title="push_candlestick_mode(mode)">
+    Controls when candlestick push events are emitted during an active `subscribe_candlesticks` subscription.
+
+    - `PushCandlestickMode::Realtime` (default) — emit updates as ticks arrive within the current bar.
+    - `PushCandlestickMode::Confirmed` — emit only after a bar closes.
+
+    ```rust
+    use longbridge::{Config, PushCandlestickMode};
+
+    let config = Config::from_apikey_env()?
+        .push_candlestick_mode(PushCandlestickMode::Confirmed);
+    ```
+  </Accordion>
+
+  <Accordion title="log_path(path)">
+    Enables daily rolling log files written to the specified directory. By default no logs are written.
+
+    ```rust
+    let config = Config::from_apikey_env()?
+        .log_path("/var/log/longbridge");
+    ```
+  </Accordion>
+
+  <Accordion title="header(key, value)">
+    Injects a custom HTTP header into every HTTP request and WebSocket upgrade request. Useful for internal proxies or tracing.
+
+    ```rust
+    let config = Config::from_apikey_env()?
+        .header("x-request-source", "my-bot");
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Shared async runtime
+
+Since v4.0.5 the SDK uses a single global Tokio runtime shared across all contexts. You do not need to manage the runtime yourself. When you call `QuoteContext::new(config)` or `TradeContext::new(config)`, the internal background task is spawned onto that shared runtime automatically. This means you can create contexts from any thread, including non-async contexts in Python and Node.js.
+
+<Note>
+  In Python and Node.js the SDK is synchronous at the surface but drives an internal async runtime. You call methods as normal blocking functions; the SDK handles the async I/O internally.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quote API" icon="chart-line" href="/concepts/quote-api">
+    Use your config to create a QuoteContext and fetch live market data.
+  </Card>
+  <Card title="Trade API" icon="arrow-right-arrow-left" href="/concepts/trade-api">
+    Submit orders and manage positions with TradeContext.
+  </Card>
+</CardGroup>

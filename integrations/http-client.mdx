@@ -1,0 +1,187 @@
+---
+title: "HTTP Client: Verify Credentials and Raw API Access"
+description: "Use the built-in HTTP client to confirm your Longbridge credentials are working or to call endpoints not yet covered by the high-level SDK contexts."
+keywords: ["longbridge", "http client", "credentials", "verification", "raw api", "python", "nodejs", "rust", "java"]
+---
+
+The Longbridge SDK includes a lightweight `HttpClient` that signs and sends raw HTTP requests directly to the Longbridge API. It is most useful in two situations: verifying that your credentials and network are working before building a full application, and calling endpoints that are not yet exposed by `QuoteContext` or `TradeContext`.
+
+## When to use the HTTP client
+
+- **Credential verification** — run one of the built-in examples to confirm your app key, app secret, and access token are valid before writing any application logic.
+- **Endpoint access** — call any REST endpoint with a signed request without constructing authentication headers by hand.
+- **Debugging** — isolate network or authentication failures from SDK-level issues.
+
+<Note>
+  For typical trading and market-data workflows, prefer `QuoteContext` and `TradeContext`. The HTTP client is intentionally low-level and does not include retry logic, WebSocket management, or response model parsing.
+</Note>
+
+## Verifying your credentials
+
+The repository includes ready-to-run examples for Python, Node.js, Rust, and Java. Each example sends a GET request to `/v1/trade/execution/today` and prints the raw JSON response.
+
+<Steps>
+  <Step title="Set your credentials">
+    Export the three required environment variables before running any example.
+
+    <CodeGroup>
+
+    ```bash macOS / Linux
+    export LONGBRIDGE_APP_KEY="your-app-key"
+    export LONGBRIDGE_APP_SECRET="your-app-secret"
+    export LONGBRIDGE_ACCESS_TOKEN="your-access-token"
+    ```
+
+    ```powershell Windows
+    setx LONGBRIDGE_APP_KEY "your-app-key"
+    setx LONGBRIDGE_APP_SECRET "your-app-secret"
+    setx LONGBRIDGE_ACCESS_TOKEN "your-access-token"
+    ```
+
+    </CodeGroup>
+
+    <Note>
+      On Windows, `setx` writes to the registry and takes effect in new terminal sessions only. Open a new terminal after running these commands.
+    </Note>
+  </Step>
+
+  <Step title="Run the example">
+    Pick the language that matches your environment.
+
+    <CodeGroup>
+
+    ```bash Python
+    python examples/python/http_client.py
+    ```
+
+    ```bash Node.js
+    node examples/nodejs/http_client.js
+    ```
+
+    ```bash Rust
+    cargo run --manifest-path examples/rust/Cargo.toml -p http_client
+    ```
+
+    ```bash Java
+    cd examples/java/http_client && mvn -q -DskipTests package && mvn -q -DskipTests exec:java
+    ```
+
+    </CodeGroup>
+  </Step>
+
+  <Step title="Check the output">
+    | Result | Meaning |
+    |--------|---------|
+    | JSON response body | Credentials are valid and the network is reachable. |
+    | HTTP 401 or 403 | `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, or `LONGBRIDGE_ACCESS_TOKEN` is incorrect or expired. |
+    | Timeout / connection error | A proxy or firewall is blocking the request. Check `LONGBRIDGE_HTTP_URL` and your network configuration. |
+  </Step>
+</Steps>
+
+## Example source code
+
+The examples below show the full source for each language. All four make the same request — a signed GET to `/v1/trade/execution/today` — and print the result.
+
+<CodeGroup>
+
+```python examples/python/http_client.py
+from longbridge.openapi import HttpClient, OAuthBuilder
+
+oauth = OAuthBuilder("your-client-id").build(
+    lambda url: print(f"Open this URL to authorize: {url}")
+)
+http_cli = HttpClient.from_oauth(oauth)
+resp = http_cli.request(
+    "get",
+    "/v1/trade/execution/today",
+)
+print(resp)
+```
+
+```javascript examples/nodejs/http_client.js
+const { HttpClient, OAuth } = require('longbridge');
+
+async function main() {
+  const oauth = await OAuth.build("your-client-id", (_, url) => {
+    console.log("Open this URL to authorize: " + url);
+  });
+  let cli = HttpClient.fromOAuth(oauth);
+  let resp = await cli.request("get", "/v1/trade/execution/today");
+  console.log(resp);
+}
+
+Promise.all([main()]).catch((err) => console.error(err));
+```
+
+```rust examples/rust/http_client/src/main.rs
+use longbridge::{
+    httpclient::{HttpClient, HttpClientConfig},
+    oauth::OAuthBuilder,
+};
+use tracing_subscriber::EnvFilter;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
+
+    let oauth = OAuthBuilder::new("your-client-id")
+        .build(|url| println!("Open this URL to authorize: {url}"))
+        .await?;
+    let http_cli = HttpClient::new(HttpClientConfig::from_oauth(oauth));
+    let resp = http_cli
+        .request("GET".parse()?, "/v1/trade/execution/today")
+        .response::<String>()
+        .send()
+        .await?;
+    println!("{resp}");
+    Ok(())
+}
+```
+
+```java examples/java/http_client/src/main/java/Main.java
+import com.longbridge.*;
+import java.util.HashMap;
+
+class Main {
+    public static void main(String[] args) throws Exception {
+        String clientId = "your-client-id";
+        OAuth oauth = new OAuthBuilder(clientId)
+                .build(url -> System.out.println("Open to authorize: " + url))
+                .get();
+        try (oauth;
+             HttpClient httpCli = HttpClient.fromOAuth(oauth)) {
+            Object resp = httpCli.request(HashMap.class, "get", "/v1/trade/execution/today", null).get();
+            System.out.println(resp);
+        }
+    }
+}
+```
+
+</CodeGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="401 or 403 response">
+    Your credentials are invalid or expired. Verify that `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN` are correct. If you are using OAuth 2.0, check that the token has not been revoked and that your OAuth client has the required permissions.
+  </Accordion>
+  <Accordion title="Timeout or connection error">
+    The request cannot reach the Longbridge API server. Check your firewall or proxy settings. If you use a custom endpoint, set `LONGBRIDGE_HTTP_URL` to the correct base URL. The default is `https://openapi.longbridge.com`.
+  </Accordion>
+  <Accordion title="Environment variables not taking effect">
+    On macOS and Linux, `export` only affects the current shell session. On Windows, `setx` writes to the registry but requires opening a new terminal before the values are available. Use `set` in the current `cmd.exe` session if you do not want to open a new window.
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/authentication">
+    Set up OAuth 2.0 or legacy API key credentials for your full application.
+  </Card>
+  <Card title="MCP server" icon="robot" href="/integrations/mcp-server">
+    Connect an AI assistant to live market data and trading via MCP.
+  </Card>
+</CardGroup>

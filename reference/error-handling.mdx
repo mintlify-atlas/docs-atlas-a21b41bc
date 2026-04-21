@@ -1,0 +1,202 @@
+---
+title: "Error Handling: Types, Codes, and Recovery Patterns"
+description: "How the Longbridge SDK surfaces errors in Rust, Python, Node.js, Java, and C — error types, OpenAPI codes, and practical handling patterns."
+keywords: ["longbridge", "error handling", "error codes", "exceptions", "debugging", "401", "403"]
+---
+
+Every SDK operation that communicates with the Longbridge platform can fail. The SDK maps all failure modes into a small, structured error hierarchy so you can match on the specific cause and decide whether to retry, surface the error to the user, or abort.
+
+## Rust error types
+
+The Rust SDK exposes two error types: `Error` for full structured information and `SimpleError` for cases where you only need a code and a message (for example, in FFI or cross-language bindings).
+
+### `Error` enum
+
+`Error` is the primary error type returned by all async SDK operations as `Result<T, Error>`.
+
+| Variant | When it occurs |
+|---------|----------------|
+| `Error::HttpClient` | An HTTP request to the REST API failed or the server returned an OpenAPI error code. |
+| `Error::WsClient` | A WebSocket connection error or server-side protocol error on the quote or trade stream. |
+| `Error::DecodeProtobuf` | The server response could not be decoded as Protobuf. |
+| `Error::DecodeJSON` | The server response could not be decoded as JSON. |
+| `Error::ParseField` | A response field could not be parsed into the expected Rust type. Includes the field name and parse error detail. |
+| `Error::UnknownCommand` | The server sent a command code that the SDK does not recognize. |
+| `Error::InvalidSecuritySymbol` | A security symbol string was malformed (for example, missing the `.HK` or `.US` market suffix). |
+| `Error::UnknownMarket` | The market extracted from a symbol string is not supported. |
+| `Error::UnknownTradeSession` | No trade session matched for the given symbol and timestamp. |
+| `Error::Blocking` | A blocking operation failed (only present when the `blocking` feature is enabled). |
+| `Error::OAuth` | An OAuth 2.0 token operation failed (load, refresh, or persist). |
+
+#### Reading the OpenAPI error code
+
+When the server returns an application-level error, call `openapi_error_code()` to retrieve the numeric code:
+
+```rust
+match result {
+    Err(err) => {
+        if let Some(code) = err.openapi_error_code() {
+            eprintln!("OpenAPI error code: {code}");
+        } else {
+            eprintln!("Non-API error: {err}");
+        }
+    }
+    Ok(data) => { /* use data */ }
+}
+```
+
+### `SimpleError` enum
+
+`SimpleError` is a flattened representation used by language bindings (Python, Node.js, Java, C) where full Rust enum matching is not available.
+
+| Variant | Fields |
+|---------|--------|
+| `SimpleError::Http` | `status_code: u16` — the HTTP status code. |
+| `SimpleError::OpenApi` | `code: i64`, `message: String`, `trace_id: String` — the structured API error. |
+| `SimpleError::Other` | A string description for all other errors (decode errors, parse errors, etc.). |
+| `SimpleError::OAuth` | A string description of an OAuth error. |
+
+Use `SimpleError::kind()` to get a `SimpleErrorKind` (`Http`, `OpenApi`, `Other`, or `OAuth`), and `SimpleError::code()` to get the numeric code without matching.
+
+Convert an `Error` to a `SimpleError` with `.into_simple_error()` or via the `From` impl:
+
+```rust
+let simple: SimpleError = err.into();
+
+match simple.kind() {
+    SimpleErrorKind::OpenApi => {
+        println!("API error {}: {}", simple.code().unwrap(), simple.message());
+        println!("Trace ID: {}", simple.trace_id().unwrap_or(""));
+    }
+    SimpleErrorKind::Http => {
+        println!("HTTP {}", simple.code().unwrap());
+    }
+    SimpleErrorKind::OAuth => {
+        println!("OAuth error: {}", simple.message());
+    }
+    SimpleErrorKind::Other => {
+        println!("Other: {}", simple.message());
+    }
+}
+```
+
+## Handling errors by language
+
+<Tabs>
+  <Tab title="Rust">
+    Use `?` for propagation or `match`/`if let` for fine-grained handling:
+
+    ```rust
+    use longbridge::Error;
+
+    match ctx.quote(["700.HK"]).await {
+        Ok(quotes) => println!("{:?}", quotes),
+        Err(err @ Error::HttpClient(_)) => {
+            if let Some(code) = err.openapi_error_code() {
+                eprintln!("OpenAPI error code: {code}");
+            } else {
+                eprintln!("HTTP error: {err}");
+            }
+        }
+        Err(Error::InvalidSecuritySymbol { symbol }) => {
+            eprintln!("Bad symbol: {symbol}");
+        }
+        Err(err) => return Err(err.into()),
+    }
+    ```
+  </Tab>
+
+  <Tab title="Python">
+    The SDK raises `OpenApiException` (sync) or propagates it from `await` expressions (async). Access `.code` and `.message` on the exception:
+
+    ```python
+    from longbridge.openapi import OpenApiException
+
+    try:
+        quotes = ctx.quote(["700.HK"])
+    except OpenApiException as e:
+        print(f"Error code: {e.code}, message: {e.message}")
+    ```
+
+    For async usage:
+
+    ```python
+    try:
+        quotes = await ctx.quote(["700.HK"])
+    except OpenApiException as e:
+        print(f"Error code: {e.code}")
+    ```
+  </Tab>
+
+  <Tab title="Node.js">
+    Errors are thrown as standard JavaScript `Error` objects with `code` and `message` properties:
+
+    ```javascript
+    try {
+      const quotes = await ctx.quote(["700.HK"]);
+    } catch (err) {
+      console.error("Error code:", err.code);
+      console.error("Message:", err.message);
+    }
+    ```
+  </Tab>
+
+  <Tab title="Java">
+    The SDK throws `OpenApiException`. Catch it to inspect the error code:
+
+    ```java
+    import com.longbridge.OpenApiException;
+
+    try {
+        var quotes = ctx.quote(new String[]{"700.HK"}).get();
+    } catch (OpenApiException e) {
+        System.out.println("Error code: " + e.getCode());
+        System.out.println("Message: " + e.getMessage());
+    }
+    ```
+  </Tab>
+
+  <Tab title="C">
+    C functions return a `lb_error_t*` pointer. Use `lb_error_code()` and `lb_error_message()` to read the details, then free with `lb_error_free()`:
+
+    ```c
+    lb_error_t* err = lb_quote_context_quote(ctx, symbols, 1, &quotes, &num_quotes);
+    if (err) {
+        int64_t code = lb_error_code(err);
+        const char* msg = lb_error_message(err);
+        fprintf(stderr, "Error %lld: %s\n", code, msg);
+        lb_error_free(err);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Common error codes and remediation
+
+| Code | Meaning | What to do |
+|------|---------|-----------|
+| `401` | Authentication failed | Verify `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN`. For OAuth, the token may have been revoked — delete the cached token file and re-authorize. |
+| `403` | Permission denied | Your OpenAPI application does not have access to the requested resource. Check the permissions granted to your app in the Longbridge user center. |
+| `429` | Rate limit exceeded | Back off and retry after a delay. Consider reducing request frequency or batching symbol queries. |
+| Network error | Cannot connect | Check firewall and proxy rules for HTTPS and WSS traffic. If using a custom endpoint, verify `LONGBRIDGE_HTTP_URL`, `LONGBRIDGE_QUOTE_WS_URL`, and `LONGBRIDGE_TRADE_WS_URL`. |
+| `InvalidSecuritySymbol` | Malformed symbol | Ensure the symbol includes the market suffix, for example `700.HK` or `AAPL.US`. |
+
+## Debugging with logs
+
+Set `LONGBRIDGE_LOG_PATH` to a directory path to enable rolling SDK logs. The SDK writes `INFO`-level logs for connection events, authentication, and API calls.
+
+```bash
+export LONGBRIDGE_LOG_PATH="/tmp/longbridge-logs"
+```
+
+On Windows:
+
+```powershell
+setx LONGBRIDGE_LOG_PATH "C:\Logs\longbridge"
+```
+
+<Warning>
+  Log files contain request metadata. Do not store them in a publicly accessible location or commit them to version control.
+</Warning>
+
+Log files rotate daily with a `.log` suffix. Each file covers the `longbridge` crate at `INFO` level, which includes connection lifecycle and error events.

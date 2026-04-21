@@ -1,0 +1,159 @@
+---
+title: "MCP Server: AI Assistant Integration"
+description: "Connect AI assistants like Claude and Cursor to live Longbridge market data and place trades using the Model Context Protocol (MCP) server."
+keywords: ["longbridge", "mcp", "model context protocol", "cursor", "cherry studio", "claude", "trading", "quotes", "ai"]
+---
+
+The Longbridge MCP server implements the [Model Context Protocol](https://modelcontextprotocol.io/introduction), giving AI assistants direct access to your Longbridge account. Once connected, your AI can fetch live quotes, query account positions, and place or cancel orders — all from natural language prompts, with no API calls written by hand.
+
+## What it enables
+
+The server exposes three capability groups to any MCP-compatible client:
+
+- **Trading** — submit, amend, and cancel orders; query today's and historical orders and transaction details
+- **Quotes** — real-time prices, historical candlesticks, and major index values
+- **Portfolio** — live account assets, current positions, and fund balances
+
+## Installation
+
+<Steps>
+  <Step title="Install the binary">
+    <Tabs>
+      <Tab title="macOS / Linux">
+        Run the install script. It downloads the latest release binary and places it at `/usr/local/bin/longbridge-mcp`.
+
+        ```bash
+        curl -sSL https://raw.githubusercontent.com/longbridge/openapi/refs/heads/main/mcp/install | bash
+        ```
+      </Tab>
+      <Tab title="Windows">
+        Download the latest `.exe` binary from the [GitHub Releases](https://github.com/longbridge/openapi/releases/tag/longbridge-mcp-0.1.0) page and place it somewhere on your `PATH`.
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Obtain credentials">
+    The MCP server authenticates with the legacy API key method. You need three values from your Longbridge user center:
+
+    - `LONGBRIDGE_APP_KEY`
+    - `LONGBRIDGE_APP_SECRET`
+    - `LONGBRIDGE_ACCESS_TOKEN`
+
+    See the [Authentication](/authentication) page for details on where to find these values.
+  </Step>
+
+  <Step title="Configure your AI client">
+    Follow the section below for your client (Cursor or Cherry Studio).
+  </Step>
+</Steps>
+
+## Configuration in Cursor
+
+Open **Cursor Settings**, go to **Features > MCP Servers**, click **+ Add New MCP Server**, and enter:
+
+- **Name:** `longbridge-mcp`
+- **Type:** `command`
+- **Command:** `env LONGBRIDGE_APP_KEY=your-app-key LONGBRIDGE_APP_SECRET=your-app-secret LONGBRIDGE_ACCESS_TOKEN=your-access-token longbridge-mcp`
+
+<Note>
+  On Windows, replace the command with:
+  `cmd /c "set LONGBRIDGE_APP_KEY=your-app-key && set LONGBRIDGE_APP_SECRET=your-app-secret && set LONGBRIDGE_ACCESS_TOKEN=your-access-token && longbridge-mcp"`
+</Note>
+
+Alternatively, add the server directly to your MCP config JSON:
+
+```json
+{
+  "mcpServers": {
+    "longbridge-mcp": {
+      "command": "/usr/local/bin/longbridge-mcp",
+      "env": {
+        "LONGBRIDGE_APP_KEY": "your-app-key",
+        "LONGBRIDGE_APP_SECRET": "your-app-secret",
+        "LONGBRIDGE_ACCESS_TOKEN": "your-access-token"
+      }
+    }
+  }
+}
+```
+
+## Configuration in Cherry Studio
+
+Open **Settings > MCP Servers**, click **+ Add Server**, and enter:
+
+- **Name:** `longbridge-mcp`
+- **Type:** `STDIO`
+- **Command:** `env LONGBRIDGE_APP_KEY=your-app-key LONGBRIDGE_APP_SECRET=your-app-secret LONGBRIDGE_ACCESS_TOKEN=your-access-token longbridge-mcp`
+
+<Note>
+  On Windows, replace the command with:
+  `cmd /c "set LONGBRIDGE_APP_KEY=your-app-key && set LONGBRIDGE_APP_SECRET=your-app-secret && set LONGBRIDGE_ACCESS_TOKEN=your-access-token && longbridge-mcp"`
+</Note>
+
+## Running as an SSE server
+
+If your client connects over HTTP rather than stdio, start the server in SSE mode:
+
+```bash
+env LONGBRIDGE_APP_KEY=your-app-key \
+  LONGBRIDGE_APP_SECRET=your-app-secret \
+  LONGBRIDGE_ACCESS_TOKEN=your-access-token \
+  longbridge-mcp --sse
+```
+
+The server binds to `127.0.0.1:8000` by default. Use `--bind` to change the address:
+
+```bash
+longbridge-mcp --sse --bind 127.0.0.1:3000
+```
+
+## Options
+
+### Readonly mode
+
+Pass `--readonly` to prevent the server from submitting any orders to the exchange. Useful when you want to allow an AI to query data but not trade on your behalf.
+
+```bash
+longbridge-mcp --readonly
+```
+
+### Logging
+
+Pass `--log-dir` to write server logs to a directory. This is helpful for debugging tool calls made by the AI client.
+
+```bash
+longbridge-mcp --log-dir /path/to/log/dir
+```
+
+## Example prompts
+
+Once the server is connected, you can ask your AI assistant questions like these:
+
+<AccordionGroup>
+  <Accordion title="Price queries">
+    - What's the current price of AAPL and TSLA stock?
+    - Show me the current values of major market indices.
+    - How has Tesla performed over the past month?
+  </Accordion>
+  <Accordion title="Historical analysis">
+    - What's the stock price history for TSLA and AAPL over the last year?
+    - Compare the performance of TSLA, AAPL, and NVDA over the past 3 months.
+  </Accordion>
+  <Accordion title="Portfolio">
+    - Generate a portfolio performance chart for my holding stocks, and return me with a data table and pie chart (just return result, no code).
+  </Accordion>
+  <Accordion title="Conditional orders">
+    - Check the price of the stocks I hold today, and if they fall or rise by more than 3%, sell (if fall) or buy (if rise) one-third at market price.
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="HTTP client" icon="plug" href="/integrations/http-client">
+    Verify credentials with the built-in HTTP client before connecting the MCP server.
+  </Card>
+  <Card title="Authentication" icon="key" href="/authentication">
+    Understand the API key and OAuth 2.0 credential options.
+  </Card>
+</CardGroup>

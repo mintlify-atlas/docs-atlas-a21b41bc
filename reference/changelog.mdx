@@ -1,0 +1,165 @@
+---
+title: "Changelog: SDK Release History"
+description: "Breaking changes, new features, bug fixes, and performance improvements for every Longbridge OpenAPI SDK release from 1.0 to the present."
+keywords: ["longbridge", "changelog", "release notes", "breaking changes", "version history"]
+---
+
+This page summarizes notable changes in each SDK release. The SDK covers all official language bindings — Rust, Python, Node.js, Java, C, and C++. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+<Note>
+  The changes below are currently unreleased and will ship in the next version.
+
+  **Added**
+  - **Rust:** `Config::header(key, value)` builder method injects custom headers into every HTTP request and WebSocket upgrade request.
+  - **Rust, Python:** `ContentContext` gains three new methods: `topic_detail(topic_id)`, `list_topic_replies(opts)`, and `create_topic_reply(opts)`.
+  - **Rust, Python:** New types `ListTopicRepliesOptions`, `CreateReplyOptions`, and `TopicReply` support the new reply methods.
+
+  **Fixed**
+  - **All bindings:** `SecurityStaticInfo.dividend_yield` doc comment corrected from "Dividend yield" (ratio) to "Dividend" (per share amount).
+  - **All bindings:** `create_topic` now returns the topic ID (`String`) instead of `OwnedTopic`, avoiding deserialization errors when optional fields are absent from the API response.
+
+  **Changed**
+  - **All bindings:** `ContentContext.topics_mine` renamed to `my_topics`; `ListMyTopicsOptions` renamed to `MyTopicsOptions`.
+  - **All bindings:** `license` field removed from `OwnedTopic` and `CreateTopicOptions`.
+</Note>
+
+<AccordionGroup>
+  <Accordion title="4.0.6">
+    **Added**
+    - **All bindings:** `ContentContext` gains two new methods: `my_topics(opts)` (topics created by the authenticated user, with optional page/size/topic\_type filtering) and `create_topic(opts)` (creates a new topic, returns topic ID).
+    - **All bindings:** New types `OwnedTopic`, `MyTopicsOptions`, and `CreateTopicOptions`.
+    - **Python:** Type stubs (`openapi.pyi`) added for `ContentContext`, `AsyncContentContext`, `OwnedTopic`, `TopicReply`, `TopicAuthor`, and `TopicImage`.
+
+    **Fixed**
+    - **C++:** `create_topic` callback now correctly yields `std::string` (topic ID) rather than `OwnedTopic`.
+  </Accordion>
+
+  <Accordion title="4.0.5">
+    **Changed**
+    - **All bindings:** `QuoteContext::new`, `TradeContext::new`, and `ContentContext::new` are now synchronous and infallible. The WebSocket connection is established lazily on first use — no more `await`, `.get()`, or callback at construction time.
+    - **All bindings:** `member_id`, `quote_level`, and `quote_package_details` are now async methods (previously sync fields/properties).
+    - **Rust:** A single global Tokio runtime is shared across all SDK components; per-binding runtimes removed.
+
+    **Performance**
+    - Connection latency reduced by approximately 1.3 seconds by fixing a geo-probe cache issue and a WebSocket rate-limiter initialization bug.
+    - Trading days are now loaded lazily on first quote use instead of eagerly at connect time.
+
+    **Fixed**
+    - OAuth token refresh now triggers 5 minutes before expiry instead of only after, preventing a blocking refresh on the first API call after token expiry.
+    - CN region detection updated to use a new probe endpoint.
+  </Accordion>
+
+  <Accordion title="4.0.4">
+    **Fixed**
+    - **Rust:** Corrected copy-paste field mapping bugs in `TryFrom<quote::FilterWarrant> for WarrantInfo` where `strike_price`, `itm_otm`, `implied_volatility`, `delta`, `effective_leverage`, `conversion_ratio`, and `balance_point` were all incorrectly mapped to `last_done`.
+  </Accordion>
+
+  <Accordion title="4.0.3">
+    **Changed**
+    - OAuth base URL migrated from `openapi.longbridgeapp.com` to `openapi.longbridge.com`.
+    - CN endpoint URLs migrated from `longportapp.cn` to `longbridge.cn`.
+    - OAuth token storage path changed from `~/.longbridge-openapi/` to `~/.longbridge/openapi/`.
+  </Accordion>
+
+  <Accordion title="4.0.2">
+    **Added**
+    - **All bindings:** New `ContentContext` with `topics(symbol)` and `news(symbol)` methods.
+    - **Quote API:** `QuoteContext.filings(symbol)` for regulatory filings, available in all bindings.
+    - **MCP server:** `news`, `topics`, and `filings` exposed as MCP tools.
+  </Accordion>
+
+  <Accordion title="4.0.1">
+    **Fixed**
+    - **Python:** Calling `str()` on enum fields such as `CashFlow.direction`, `Subscription`, or `OptionDirection` no longer causes a hang or deadlock. Previously missing type registrations in the quote and trade modules were added.
+  </Accordion>
+
+  <Accordion title="4.0.0 — Breaking changes">
+    **Added**
+    - **OAuth 2.0** authentication for all language bindings. Use `OAuthBuilder` to run the browser authorization flow; pass the resulting `OAuth` handle to `Config::from_oauth()`. Tokens are persisted under `~/.longbridge/openapi/tokens/<client_id>` and reused across runs.
+    - **Python:** `AsyncQuoteContext` and `AsyncTradeContext` accept async callbacks for all push event handlers. If a callback returns a coroutine, the SDK schedules it on the asyncio loop.
+    - **Python:** `AsyncQuoteContext.create()` and `AsyncTradeContext.create()` accept an optional `loop_` argument for scheduling async callbacks with `asyncio.run_coroutine_threadsafe`.
+
+    **Breaking changes**
+    - **Rust:** `Config::new` → `Config::from_apikey`; `Config::from_env` → `Config::from_apikey_env`. `Config::refresh_access_token` and `Config::refresh_access_token_blocking` removed.
+    - **C/C++:** `lb_config_new` → `lb_config_from_apikey`; `lb_config_from_env` → `lb_config_from_apikey_env`; `lb_config_refresh_access_token` removed. Same pattern applies to `lb_http_client_*`.
+    - **Java:** `Config.fromEnv()` → `Config.fromApikeyEnv()`; `Config.refreshAccessToken()` removed.
+    - **Python:** `Config.from_env()` → `Config.from_apikey_env()`; `Config.refresh_access_token()` removed. `HttpClient.from_env()` → `HttpClient.from_apikey_env()`.
+    - **Node.js:** `Config.fromEnv()` → `Config.fromApikeyEnv()`.
+  </Accordion>
+
+  <Accordion title="3.0.x series">
+    **3.0.22**
+    - **Python:** Asyncio support added for quote, trade, and HTTP client. Existing sync API unchanged.
+    - **Rust:** Fixed incorrect field mapping in `WarrantInfo` for warrant filter API.
+
+    **3.0.21**
+    - **Java:** Fixed `limit_depth_level` and `trigger_count` being passed and read correctly as `Integer` in submit/replace order options and order detail.
+
+    **3.0.20**
+    - Added `limit_depth_level`, `trigger_count`, and `monitor_price` to `OrderDetail` and `Order` types; added support for specifying these fields when placing orders.
+
+    **3.0.18**
+    - Added `US_VIX` market definition.
+    - **Python:** Added support for Python 3.14.
+
+    **3.0.17**
+    - Fixed candlestick (K-line) generation errors in certain timing scenarios.
+    - Fixed `OrderDetail` parsing failures in certain situations.
+
+    **3.0.16**
+    - Added `SecurityBoard.SPXIndex` and `SecurityBoard.VIXIndex`.
+
+    **3.0.15**
+    - Added `ErrorKind` enum to represent error kinds.
+
+    **3.0.12**
+    - Added `trade_session` parameter for querying all session intraday data.
+    - Added `Market.Crypto`.
+    - Fixed subscription for index K-lines.
+
+    **3.0.0**
+    - Added support for extended hours candlesticks.
+    - Added market temperature API.
+    - Added support for `LONGBRIDGE_LANGUAGE` environment variable to set response language.
+    - **Java:** Added `QuoteContext.getCapitalDistribution`, `QuoteContext.getMarketTemperature`, and `QuoteContext.getHistoryMarketTemperature` methods.
+  </Accordion>
+
+  <Accordion title="2.x series">
+    **2.1.8**
+    - Added `log_path` field to `Config`.
+
+    **2.1.6**
+    - Added support for more candlestick periods.
+    - Added `PushQuote.current_volume` and `PushQuote.current_turnover`.
+
+    **2.1.5**
+    - Added `PushCandlestick.is_confirmed` field.
+
+    **2.1.0**
+    - Updated candlestick generation rules.
+
+    **2.0.5**
+    - Added `Serialize`/`Deserialize` derives to all response types.
+
+    **2.0.4**
+    - Added `LONGBRIDGE_PRINT_QUOTE_PACKAGES` environment variable (default: `true`) to control printing of opened quote packages on WebSocket connect.
+
+    **2.0.3**
+    - Made the `time` parameter of `Quote.history_candlesticks_by_offset` optional.
+
+    **2.0.2**
+    - **Python:** Corrected `TradeStatus.SuspendTrade` → `TradeStatus.Suspend` in the type stub.
+
+    **2.0.1**
+    - The SDK now returns the most recent historical candlesticks immediately after subscribing, rather than waiting for the next push.
+
+    **2.0.0**
+    - Prints the opened quote packages on WebSocket connect.
+    - Added `EstimateMaxPurchaseQuantityOptions.fractional_shares` field.
+    - Trading API quantity fields changed from `int` to `Decimal`.
+  </Accordion>
+
+  <Accordion title="1.0.32">
+    - Made `Depth.price` an optional type.
+  </Accordion>
+</AccordionGroup>

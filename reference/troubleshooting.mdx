@@ -1,0 +1,236 @@
+---
+title: "Troubleshooting Common Longbridge SDK Problems"
+description: "Solutions for auth failures, missing push events, network errors, and env variable issues when integrating the Longbridge OpenAPI SDK."
+keywords: ["longbridge", "troubleshooting", "debug", "401", "403", "push events", "connection error", "environment variables"]
+---
+
+This guide covers the most common problems encountered when integrating the Longbridge OpenAPI SDK. Each section describes the symptom, the likely cause, and the steps to resolve it.
+
+<AccordionGroup>
+  <Accordion title="Authentication errors (401 / 403)" icon="lock">
+    **Symptom:** API calls return a 401 Unauthorized or 403 Forbidden error.
+
+    **Causes and fixes:**
+
+    1. Verify that `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN` are all set correctly. Copy them directly from the Longbridge user center to avoid typos or trailing whitespace.
+    2. Access tokens expire. Generate a fresh token in the user center and update the environment variable (or the `.env` file).
+    3. A 403 specifically means your app lacks the required permission for the endpoint. Check the permission settings on your OpenAPI application in the user center.
+    4. For OAuth 2.0: if the token was revoked, delete the cached token file at `~/.longbridge/openapi/tokens/<client_id>` (or `%USERPROFILE%\.longbridge\openapi\tokens\<client_id>` on Windows) and re-run the browser authorization flow.
+
+    Run the minimal verification example to confirm credentials in isolation:
+
+    ```bash
+    # Python
+    python examples/python/http_client.py
+
+    # Node.js
+    node examples/nodejs/http_client.js
+
+    # Rust
+    cargo run --manifest-path examples/rust/Cargo.toml -p http_client
+    ```
+
+    A valid JSON response confirms credentials are correct. A 401/403 response confirms a credential problem.
+  </Accordion>
+
+  <Accordion title="Environment variables not taking effect" icon="terminal">
+    **Symptom:** You set an environment variable but the SDK still behaves as if it were unset.
+
+    **macOS and Linux:** `export` only affects the current shell session and any child processes started from it. Each new terminal tab or window is a fresh shell with its own environment.
+
+    ```bash
+    # Correct — use export
+    export LONGBRIDGE_APP_KEY="your-key"
+
+    # Incorrect — the variable is set but not exported to child processes
+    LONGBRIDGE_APP_KEY="your-key"
+    ```
+
+    To persist variables across sessions, add the `export` lines to your shell profile (`~/.zshrc`, `~/.bashrc`, or `~/.profile`) and reload it:
+
+    ```bash
+    source ~/.zshrc
+    ```
+
+    **Windows:** `setx` writes to the registry but does not update the current terminal session. You must open a new terminal window after running `setx` for the change to take effect.
+
+    ```powershell
+    # Persists to registry — requires new terminal
+    setx LONGBRIDGE_APP_KEY "your-key"
+
+    # Takes effect immediately in current cmd.exe session only
+    set LONGBRIDGE_APP_KEY=your-key
+    ```
+
+    Alternatively, place your variables in a `.env` file in the working directory. The SDK calls `dotenv::dotenv()` at construction time and picks up the file automatically.
+
+    ```bash
+    # .env
+    LONGBRIDGE_APP_KEY=your-key
+    LONGBRIDGE_APP_SECRET=your-secret
+    LONGBRIDGE_ACCESS_TOKEN=your-token
+    ```
+  </Accordion>
+
+  <Accordion title="Quote subscription exits immediately with no events" icon="broadcast-tower">
+    **Symptom:** You subscribe to quotes and the program exits without printing any events.
+
+    **Cause:** The process exits as soon as the main function returns, before any push events arrive. The subscription is active as long as the context is alive, but a program that exits immediately never receives events.
+
+    **Fix:** Keep the process alive by blocking on the receive loop or sleeping indefinitely.
+
+    <Tabs>
+      <Tab title="Rust">
+        ```rust
+        let (ctx, mut receiver) = QuoteContext::new(config);
+        ctx.subscribe(["700.HK"], SubFlags::QUOTE).await?;
+
+        // Block forever on the receive loop
+        while let Some(event) = receiver.recv().await {
+            println!("{:?}", event);
+        }
+        ```
+      </Tab>
+      <Tab title="Python">
+        ```python
+        import time
+
+        ctx.set_on_quote(lambda event: print(event))
+        ctx.subscribe(["700.HK"], SubType.Quote)
+
+        # Keep the process alive
+        while True:
+            time.sleep(1)
+        ```
+      </Tab>
+      <Tab title="Node.js">
+        ```javascript
+        ctx.setOnQuote((event) => console.log(event));
+        await ctx.subscribe(["700.HK"], SubType.Quote);
+
+        // Node.js stays alive while there are active event listeners or timers
+        // If your program would otherwise exit, add:
+        setInterval(() => {}, 1 << 30);
+        ```
+      </Tab>
+    </Tabs>
+  </Accordion>
+
+  <Accordion title="No push events received (process stays alive)" icon="bell-slash">
+    **Symptom:** The process stays running but push events never arrive even though the subscription appeared to succeed.
+
+    **Checks:**
+    1. Confirm the subscription call did not throw an error — wrap it in a try/catch or check the `Result`.
+    2. Confirm you subscribed with the correct `SubFlags` or `SubType` for the event you expect (e.g., `SubFlags::QUOTE` for real-time quotes, `SubFlags::DEPTH` for order book depth).
+    3. Confirm the market is open. Outside trading hours there may be no quote updates to push.
+    4. Check that `LONGBRIDGE_PRINT_QUOTE_PACKAGES` is `true` (the default) and look for the package list printed on connect. If the required package is not listed, your account may not have access to it.
+    5. Enable SDK logs (see the "Debugging with logs" section below) and look for connection lifecycle events.
+  </Accordion>
+
+  <Accordion title="Network and connection errors" icon="wifi">
+    **Symptom:** SDK calls fail with a network or connection error, or time out.
+
+    **Checks:**
+    1. Verify that your environment allows outbound HTTPS (port 443) and WSS (WebSocket Secure, also port 443) connections to `*.longbridge.com` (and `*.longbridge.cn` for CN-region users).
+    2. If you are behind a corporate proxy, configure it at the OS or shell level so the SDK's HTTP client picks it up via the system proxy settings.
+    3. If you need to route traffic through a specific endpoint, set `LONGBRIDGE_HTTP_URL`, `LONGBRIDGE_QUOTE_WS_URL`, and `LONGBRIDGE_TRADE_WS_URL` to your custom URLs.
+
+    ```bash
+    export LONGBRIDGE_HTTP_URL="https://your-proxy.example.com"
+    export LONGBRIDGE_QUOTE_WS_URL="wss://your-proxy.example.com/quote/v2"
+    export LONGBRIDGE_TRADE_WS_URL="wss://your-proxy.example.com/trade/v2"
+    ```
+
+    4. Run the minimal HTTP client example to test connectivity before attempting WebSocket subscriptions:
+
+    ```bash
+    python examples/python/http_client.py
+    ```
+
+    A timeout or connection refused error points to a network-level block.
+  </Accordion>
+
+  <Accordion title="Debugging with SDK logs" icon="file-lines">
+    **Symptom:** You need more detail about what the SDK is doing to diagnose an issue.
+
+    Set `LONGBRIDGE_LOG_PATH` to a directory path. The SDK writes daily rotating log files at `INFO` level covering connection events, authentication, and API calls.
+
+    ```bash
+    # macOS / Linux
+    export LONGBRIDGE_LOG_PATH="/tmp/longbridge-logs"
+
+    # Windows
+    setx LONGBRIDGE_LOG_PATH "C:\Logs\longbridge"
+    ```
+
+    Or set it programmatically:
+
+    ```rust
+    let config = Config::from_apikey_env()?
+        .log_path("/tmp/longbridge-logs");
+    ```
+
+    Log files are named with a `.log` suffix and rotate at midnight. Look for `ERROR` or `WARN` entries to identify connection or authentication issues.
+
+    <Warning>
+      Log files contain request metadata including endpoint URLs and authentication headers. Do not store them in a publicly accessible location or commit them to version control.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Quote packages appear empty or missing" icon="package">
+    **Symptom:** You connect to the quote stream but receive no data, or only partial data, even for markets you expect to have access to.
+
+    The SDK prints a summary of the opened quote packages when it connects to the WebSocket server. This is controlled by `LONGBRIDGE_PRINT_QUOTE_PACKAGES`, which defaults to `true`.
+
+    Check the console output at startup for a line that lists your active packages. If the expected package is absent, your account does not have access to that market data feed.
+
+    If you previously disabled this output, re-enable it:
+
+    ```bash
+    export LONGBRIDGE_PRINT_QUOTE_PACKAGES=true
+    ```
+
+    Or in code:
+
+    ```rust
+    // Do NOT call .dont_print_quote_packages() — omit it to keep the default
+    let config = Config::from_apikey_env()?;
+    ```
+
+    Contact Longbridge support to activate additional quote packages for your account.
+  </Accordion>
+
+  <Accordion title="Windows-specific issues" icon="windows">
+    **`setx` requires a new terminal session**
+
+    `setx` writes the variable to the Windows registry, but the current terminal process does not inherit the new value. Open a new Command Prompt or PowerShell window after running `setx`.
+
+    For the current session only, use `set` (Command Prompt) or `$env:` (PowerShell):
+
+    ```powershell
+    # PowerShell — current session only
+    $env:LONGBRIDGE_APP_KEY = "your-key"
+    $env:LONGBRIDGE_APP_SECRET = "your-secret"
+    $env:LONGBRIDGE_ACCESS_TOKEN = "your-token"
+    ```
+
+    ```cmd
+    rem Command Prompt — current session only
+    set LONGBRIDGE_APP_KEY=your-key
+    set LONGBRIDGE_APP_SECRET=your-secret
+    set LONGBRIDGE_ACCESS_TOKEN=your-token
+    ```
+
+    **Token storage path on Windows**
+
+    OAuth tokens are stored at `%USERPROFILE%\.longbridge\openapi\tokens\<client_id>`. If you need to force re-authorization, delete the file at that path.
+
+    **Log path separator**
+
+    Use forward slashes or escaped backslashes in `LONGBRIDGE_LOG_PATH` to avoid shell escaping issues:
+
+    ```powershell
+    setx LONGBRIDGE_LOG_PATH "C:/Logs/longbridge"
+    ```
+  </Accordion>
+</AccordionGroup>

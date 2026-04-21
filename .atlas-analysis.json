@@ -1,0 +1,88 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Longbridge OpenAPI SDK",
+  "projectDescription": "A multi-language SDK (Rust, Python, Node.js, Java, C, C++) for programmatic trading, real-time market quotes, and portfolio management via Longbridge OpenAPI.",
+  "theme": "luma",
+  "primaryColor": "#1A6FE8",
+  "lightColor": "#E8F0FD",
+  "darkColor": "#0D3A8C",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "authentication"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/configuration",
+              "concepts/quote-api",
+              "concepts/trade-api",
+              "concepts/asset-api",
+              "concepts/realtime-subscriptions"
+            ]
+          },
+          {
+            "group": "SDK by Language",
+            "pages": [
+              "sdks/rust",
+              "sdks/python",
+              "sdks/nodejs",
+              "sdks/java",
+              "sdks/c-cpp"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/mcp-server",
+              "integrations/http-client"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/configuration-reference",
+              "reference/error-handling",
+              "reference/changelog",
+              "reference/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-language support: Rust, Python, Node.js, Java, C, C++",
+    "Real-time market data subscriptions via WebSocket",
+    "Full trading lifecycle: submit, amend, cancel orders",
+    "Portfolio and account asset queries",
+    "OAuth 2.0 and legacy API key authentication",
+    "MCP server for AI-driven trading and market analysis",
+    "Async and blocking API variants",
+    "Overnight quote support and candlestick streaming"
+  ],
+  "publicApiSurface": [
+    "QuoteContext::new(config) — create quote API context",
+    "QuoteContext::quote(symbols) — get real-time security quotes",
+    "QuoteContext::subscribe(symbols, flags) — subscribe to push events",
+    "QuoteContext::candlesticks(symbol, period, count, adjust_type) — historical candlesticks",
+    "TradeContext::new(config) — create trade API context",
+    "TradeContext::submit_order(opts) — submit a new order",
+    "TradeContext::today_orders(opts) — list today's orders",
+    "TradeContext::replace_order(opts) — modify an existing order",
+    "TradeContext::cancel_order(order_id) — cancel an order",
+    "AssetContext — account balance, stock positions, fund positions",
+    "Config::from_oauth(oauth) — create config from OAuth credentials",
+    "Config::from_apikey_env() — create config from environment variables",
+    "OAuthBuilder::new(client_id).build(callback) — OAuth 2.0 authorization flow",
+    "ContentContext — topics, replies, community content API"
+  ]
+}

@@ -1,0 +1,48 @@
+---
+title: "What is the Longbridge OpenAPI SDK?"
+description: "The Longbridge OpenAPI SDK provides programmatic access to real-time quotes, order management, and portfolio data across six languages."
+keywords: ["longbridge", "openapi", "sdk", "trading", "quotes", "portfolio", "real-time"]
+---
+
+Longbridge OpenAPI gives developers programmatic access to live market quotes, order management, portfolio data, and real-time push notifications. The SDK is built on a Rust core and exposes idiomatic bindings for Python, Node.js, Java, C, and C++, so you can work in the language that suits your project without sacrificing performance or correctness.
+
+## What you can build
+
+<CardGroup cols={2}>
+  <Card title="Trading" icon="arrow-right-arrow-left">
+    Create, amend, and cancel orders. Query today's and historical orders, executions, and fills across Hong Kong, US, and other supported markets.
+  </Card>
+  <Card title="Quotes" icon="chart-line">
+    Fetch real-time security quotes, historical candlesticks, option chains, warrants, broker queues, and market depth for any subscribed symbol.
+  </Card>
+  <Card title="Portfolio" icon="wallet">
+    Query account balances, stock and fund positions, cash flow statements, and margin details in real time.
+  </Card>
+  <Card title="Real-time subscriptions" icon="bolt">
+    Subscribe to WebSocket-based push events for live quote updates, candlestick ticks, and order status changes without polling.
+  </Card>
+</CardGroup>
+
+## Supported languages
+
+The SDK is available for six languages, all sharing the same API surface and authentication model:
+
+| Language | Minimum version | Install |
+|----------|----------------|---------|
+| Rust     | 1.89.0+        | `cargo add longbridge` |
+| Python   | 3.8+           | `pip install longbridge` |
+| Node.js  | 10+            | `npm install longbridge` |
+| Java     | 11+            | Maven Central `io.github.longbridge:openapi-sdk` |
+| C        | C99+           | [Download from Releases](https://github.com/longbridge/openapi/releases) |
+| C++      | C++17+         | [Download from Releases](https://github.com/longbridge/openapi/releases) |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install the SDK and fetch your first live quote in under five minutes.
+  </Card>
+  <Card title="Authentication" icon="key" href="/authentication">
+    Set up OAuth 2.0 or legacy API key authentication before making your first call.
+  </Card>
+</CardGroup>

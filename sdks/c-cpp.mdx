@@ -1,0 +1,592 @@
+---
+title: "Longbridge OpenAPI SDK for C and C++"
+description: "Download the C SDK, include longbridge.h, and use the callback-based async API to fetch quotes and submit trade orders from Longbridge OpenAPI."
+keywords: ["longbridge", "c", "c++", "cpp", "sdk", "openapi", "quote", "trade", "cmake", "callbacks"]
+---
+
+The Longbridge OpenAPI SDK ships a prebuilt C library (`longbridge.h`) with a fully callback-based async API. Because the SDK is a native C library, it also works directly from C++ projects — include the header and link the same binary.
+
+<Info>
+  Download the prebuilt SDK from [GitHub Releases](https://github.com/longbridge/openapi/releases). Full C API reference is available at [longbridge.github.io/openapi/c](https://longbridge.github.io/openapi/c/index.html).
+</Info>
+
+## Installation
+
+<Steps>
+  <Step title="Download the SDK">
+    Go to the [GitHub Releases](https://github.com/longbridge/openapi/releases) page and download the archive for your platform:
+
+    | Platform | Archive name pattern |
+    |----------|---------------------|
+    | Linux x86_64 | `longbridge-c-*-x86_64-unknown-linux-gnu.tar.gz` |
+    | macOS (Apple Silicon) | `longbridge-c-*-aarch64-apple-darwin.tar.gz` |
+    | macOS (Intel) | `longbridge-c-*-x86_64-apple-darwin.tar.gz` |
+    | Windows x86_64 | `longbridge-c-*-x86_64-pc-windows-msvc.zip` |
+
+    Extract the archive. You will find:
+    - `include/longbridge.h` — the public header
+    - `lib/liblongbridge.a` (or `.lib` / `.dylib` / `.dll`) — the compiled library
+  </Step>
+
+  <Step title="Configure your build">
+    Add the include and library paths to your build system. A minimal CMake setup:
+
+    ```cmake CMakeLists.txt
+    cmake_minimum_required(VERSION 3.15)
+    project(my_app C)
+
+    add_executable(my_app main.c)
+    target_include_directories(my_app PRIVATE /path/to/longbridge/include)
+    target_link_directories(my_app PRIVATE /path/to/longbridge/lib)
+    target_link_libraries(my_app PRIVATE longbridge)
+    ```
+
+    On Linux and macOS, also link `pthread` and `dl` if not already pulled in transitively:
+
+    ```cmake CMakeLists.txt
+    target_link_libraries(my_app PRIVATE longbridge pthread dl)
+    ```
+  </Step>
+
+  <Step title="Authenticate">
+    The SDK supports two methods. OAuth 2.0 is recommended — no HMAC signatures required and tokens refresh automatically.
+
+    **OAuth 2.0**
+
+    Register an OAuth client to obtain a `client_id`:
+
+    <CodeGroup>
+
+    ```bash macOS / Linux
+    curl -X POST https://openapi.longbridge.com/oauth2/register \
+      -H "Content-Type: application/json" \
+      -d '{
+        "client_name": "My Application",
+        "redirect_uris": ["http://localhost:60355/callback"],
+        "grant_types": ["authorization_code", "refresh_token"]
+      }'
+    ```
+
+    ```powershell Windows
+    Invoke-RestMethod -Method Post -Uri https://openapi.longbridge.com/oauth2/register `
+      -ContentType "application/json" `
+      -Body '{
+        "client_name": "My Application",
+        "redirect_uris": ["http://localhost:60355/callback"],
+        "grant_types": ["authorization_code", "refresh_token"]
+      }'
+    ```
+
+    </CodeGroup>
+
+    The response contains your `client_id`. Pass it to `lb_oauth_new`. On first run the SDK opens a browser authorization URL; on subsequent runs it loads and refreshes the cached token from `~/.longbridge/openapi/tokens/<client_id>` automatically.
+
+    <Tabs>
+      <Tab title="C">
+        ```c
+        #include <longbridge.h>
+        #include <stdio.h>
+
+        static void
+        on_open_url(const char* url, void* userdata)
+        {
+          printf("Open this URL to authorize: %s\n", url);
+        }
+
+        static void
+        on_oauth_ready(const struct lb_async_result_t* res)
+        {
+          if (res->error) {
+            printf("OAuth failed: %s\n", lb_error_message(res->error));
+            return;
+          }
+
+          lb_oauth_t* oauth = (lb_oauth_t*)res->data;
+          lb_config_t* config = lb_config_from_oauth(oauth);
+          // Use config to create contexts...
+          lb_config_free(config);
+          lb_oauth_free(oauth);
+        }
+
+        int
+        main(int argc, char const* argv[])
+        {
+          lb_oauth_new("your-client-id", 0, on_open_url, NULL, on_oauth_ready, NULL);
+          getchar();
+          return 0;
+        }
+        ```
+      </Tab>
+      <Tab title="C++">
+        ```cpp
+        #include <longbridge.h>
+        #include <cstdio>
+
+        static void
+        on_open_url(const char* url, void* /*userdata*/)
+        {
+          std::printf("Open this URL to authorize: %s\n", url);
+        }
+
+        static void
+        on_oauth_ready(const lb_async_result_t* res)
+        {
+          if (res->error) {
+            std::printf("OAuth failed: %s\n", lb_error_message(res->error));
+            return;
+          }
+
+          auto* oauth  = static_cast<lb_oauth_t*>(res->data);
+          auto* config = lb_config_from_oauth(oauth);
+          // Use config to create contexts...
+          lb_config_free(config);
+          lb_oauth_free(oauth);
+        }
+
+        int main()
+        {
+          lb_oauth_new("your-client-id", 0, on_open_url, nullptr, on_oauth_ready, nullptr);
+          std::getchar();
+        }
+        ```
+      </Tab>
+    </Tabs>
+
+    **Legacy API key**
+
+    Set three environment variables from your Longbridge user center:
+
+    <CodeGroup>
+
+    ```bash macOS / Linux
+    export LONGBRIDGE_APP_KEY="App Key get from user center"
+    export LONGBRIDGE_APP_SECRET="App Secret get from user center"
+    export LONGBRIDGE_ACCESS_TOKEN="Access Token get from user center"
+    ```
+
+    ```powershell Windows
+    setx LONGBRIDGE_APP_KEY "App Key get from user center"
+    setx LONGBRIDGE_APP_SECRET "App Secret get from user center"
+    setx LONGBRIDGE_ACCESS_TOKEN "Access Token get from user center"
+    ```
+
+    </CodeGroup>
+  </Step>
+</Steps>
+
+## Quote API — fetch quotes
+
+All API calls are asynchronous and deliver results via callback. `lb_quote_context_quote` calls `on_quote` when the response arrives.
+
+<Tabs>
+  <Tab title="C">
+    ```c
+    #include <longbridge.h>
+    #include <stdio.h>
+    #ifdef WIN32
+    #include <windows.h>
+    #endif
+
+    static void
+    on_quote(const struct lb_async_result_t* res)
+    {
+      if (res->error) {
+        printf("failed to get quote: %s\n", lb_error_message(res->error));
+        return;
+      }
+
+      lb_security_quote_t* data = (lb_security_quote_t*)res->data;
+      for (int i = 0; i < res->length; i++) {
+        const lb_security_quote_t* quote = &data[i];
+        printf("%s timestamp=%lld last_done=%f open=%f high=%f low=%f volume=%lld "
+               "turnover=%f\n",
+               quote->symbol,
+               quote->timestamp,
+               lb_decimal_to_double(quote->last_done),
+               lb_decimal_to_double(quote->open),
+               lb_decimal_to_double(quote->high),
+               lb_decimal_to_double(quote->low),
+               quote->volume,
+               lb_decimal_to_double(quote->turnover));
+      }
+    }
+
+    static void
+    on_oauth_ready(const struct lb_async_result_t* res)
+    {
+      if (res->error) {
+        printf("OAuth failed: %s\n", lb_error_message(res->error));
+        return;
+      }
+
+      lb_oauth_t* oauth = (lb_oauth_t*)res->data;
+      lb_config_t* config = lb_config_from_oauth(oauth);
+      const lb_quote_context_t* ctx = lb_quote_context_new(config);
+      lb_config_free(config);
+      lb_oauth_free(oauth);
+
+      const char* symbols[] = { "700.HK", "AAPL.US", "TSLA.US", "NFLX.US" };
+      lb_quote_context_quote(ctx, symbols, 4, on_quote, NULL);
+    }
+
+    static void
+    on_open_url(const char* url, void* userdata)
+    {
+      printf("Open this URL to authorize: %s\n", url);
+    }
+
+    int
+    main(int argc, char const* argv[])
+    {
+    #ifdef WIN32
+      SetConsoleOutputCP(CP_UTF8);
+    #endif
+
+      lb_oauth_new("your-client-id", 0, on_open_url, NULL, on_oauth_ready, NULL);
+      getchar();
+      return 0;
+    }
+    ```
+  </Tab>
+  <Tab title="C++">
+    ```cpp
+    #include <longbridge.h>
+    #include <cstdio>
+    #ifdef _WIN32
+    #include <windows.h>
+    #endif
+
+    static void
+    on_quote(const lb_async_result_t* res)
+    {
+      if (res->error) {
+        std::printf("failed to get quote: %s\n", lb_error_message(res->error));
+        return;
+      }
+
+      auto* data = static_cast<const lb_security_quote_t*>(res->data);
+      for (size_t i = 0; i < res->length; ++i) {
+        const auto& q = data[i];
+        std::printf("%s last_done=%f open=%f high=%f low=%f\n",
+                    q.symbol,
+                    lb_decimal_to_double(q.last_done),
+                    lb_decimal_to_double(q.open),
+                    lb_decimal_to_double(q.high),
+                    lb_decimal_to_double(q.low));
+      }
+    }
+
+    static void
+    on_oauth_ready(const lb_async_result_t* res)
+    {
+      if (res->error) { std::printf("OAuth failed: %s\n", lb_error_message(res->error)); return; }
+
+      auto* oauth  = static_cast<lb_oauth_t*>(res->data);
+      auto* config = lb_config_from_oauth(oauth);
+      auto* ctx    = lb_quote_context_new(config);
+      lb_config_free(config);
+      lb_oauth_free(oauth);
+
+      const char* symbols[] = { "700.HK", "AAPL.US", "TSLA.US", "NFLX.US" };
+      lb_quote_context_quote(ctx, symbols, 4, on_quote, nullptr);
+    }
+
+    int main()
+    {
+    #ifdef _WIN32
+      SetConsoleOutputCP(CP_UTF8);
+    #endif
+      lb_oauth_new("your-client-id", 0,
+                   [](const char* url, void*) { std::printf("Authorize: %s\n", url); },
+                   nullptr, on_oauth_ready, nullptr);
+      std::getchar();
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Quote API — subscribe to push events
+
+`lb_quote_context_set_on_quote` registers a push callback. `lb_quote_context_subscribe` activates the subscription. Keep the process alive with `getchar()` to continue receiving events.
+
+<Tabs>
+  <Tab title="C">
+    ```c
+    #include <longbridge.h>
+    #include <stdio.h>
+    #ifdef WIN32
+    #include <windows.h>
+    #endif
+
+    static void
+    on_quote(const struct lb_quote_context_t* ctx,
+             const struct lb_push_quote_t* quote,
+             void* userdata)
+    {
+      printf("%s timestamp=%lld last_done=%f open=%f high=%f low=%f volume=%lld "
+             "turnover=%f\n",
+             quote->symbol,
+             quote->timestamp,
+             lb_decimal_to_double(quote->last_done),
+             lb_decimal_to_double(quote->open),
+             lb_decimal_to_double(quote->high),
+             lb_decimal_to_double(quote->low),
+             quote->volume,
+             lb_decimal_to_double(quote->turnover));
+    }
+
+    static void
+    on_subscribe(const struct lb_async_result_t* res)
+    {
+      if (res->error) {
+        printf("failed to subscribe: %s\n", lb_error_message(res->error));
+      }
+    }
+
+    static void
+    on_oauth_ready(const struct lb_async_result_t* res)
+    {
+      if (res->error) {
+        printf("OAuth failed: %s\n", lb_error_message(res->error));
+        return;
+      }
+
+      lb_oauth_t* oauth = (lb_oauth_t*)res->data;
+      lb_config_t* config = lb_config_from_oauth(oauth);
+      const lb_quote_context_t* ctx = lb_quote_context_new(config);
+      lb_config_free(config);
+      lb_oauth_free(oauth);
+
+      lb_quote_context_set_on_quote(ctx, on_quote, NULL, NULL);
+
+      const char* symbols[] = { "700.HK", "AAPL.US", "TSLA.US", "NFLX.US" };
+      lb_quote_context_subscribe(ctx, symbols, 4, LB_SUBFLAGS_QUOTE, on_subscribe, NULL);
+    }
+
+    static void
+    on_open_url(const char* url, void* userdata)
+    {
+      printf("Open this URL to authorize: %s\n", url);
+    }
+
+    int
+    main(int argc, char const* argv[])
+    {
+    #ifdef WIN32
+      SetConsoleOutputCP(CP_UTF8);
+    #endif
+
+      lb_oauth_new("your-client-id", 0, on_open_url, NULL, on_oauth_ready, NULL);
+      getchar();
+      return 0;
+    }
+    ```
+  </Tab>
+  <Tab title="C++">
+    ```cpp
+    #include <longbridge.h>
+    #include <cstdio>
+    #ifdef _WIN32
+    #include <windows.h>
+    #endif
+
+    static void
+    on_push_quote(const lb_quote_context_t* /*ctx*/,
+                  const lb_push_quote_t* quote,
+                  void* /*userdata*/)
+    {
+      std::printf("%s last_done=%f\n", quote->symbol, lb_decimal_to_double(quote->last_done));
+    }
+
+    static void
+    on_subscribe(const lb_async_result_t* res)
+    {
+      if (res->error)
+        std::printf("failed to subscribe: %s\n", lb_error_message(res->error));
+    }
+
+    static void
+    on_oauth_ready(const lb_async_result_t* res)
+    {
+      if (res->error) { std::printf("OAuth failed: %s\n", lb_error_message(res->error)); return; }
+
+      auto* oauth  = static_cast<lb_oauth_t*>(res->data);
+      auto* config = lb_config_from_oauth(oauth);
+      auto* ctx    = lb_quote_context_new(config);
+      lb_config_free(config);
+      lb_oauth_free(oauth);
+
+      lb_quote_context_set_on_quote(ctx, on_push_quote, nullptr, nullptr);
+
+      const char* symbols[] = { "700.HK", "AAPL.US", "TSLA.US", "NFLX.US" };
+      lb_quote_context_subscribe(ctx, symbols, 4, LB_SUBFLAGS_QUOTE, on_subscribe, nullptr);
+    }
+
+    int main()
+    {
+    #ifdef _WIN32
+      SetConsoleOutputCP(CP_UTF8);
+    #endif
+      lb_oauth_new("your-client-id", 0,
+                   [](const char* url, void*) { std::printf("Authorize: %s\n", url); },
+                   nullptr, on_oauth_ready, nullptr);
+      std::getchar();
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Trade API — submit an order
+
+<Tabs>
+  <Tab title="C">
+    ```c
+    #include <longbridge.h>
+    #include <stdio.h>
+    #ifdef WIN32
+    #include <windows.h>
+    #endif
+
+    static void
+    on_submit_order(const struct lb_async_result_t* res)
+    {
+      if (res->error) {
+        printf("failed to submit order: %s\n", lb_error_message(res->error));
+        return;
+      }
+
+      const lb_submit_order_response_t* resp = res->data;
+      printf("order id: %s\n", resp->order_id);
+    }
+
+    static void
+    on_oauth_ready(const struct lb_async_result_t* res)
+    {
+      if (res->error) {
+        printf("OAuth failed: %s\n", lb_error_message(res->error));
+        return;
+      }
+
+      lb_oauth_t* oauth = (lb_oauth_t*)res->data;
+      lb_config_t* config = lb_config_from_oauth(oauth);
+      const lb_trade_context_t* ctx = lb_trade_context_new(config);
+      lb_config_free(config);
+      lb_oauth_free(oauth);
+
+      lb_decimal_t* submitted_price    = lb_decimal_from_double(50.0);
+      lb_decimal_t* submitted_quantity = lb_decimal_from_double(200.0);
+      lb_submit_order_options_t opts = {
+        "700.HK",       OrderTypeLO,
+        OrderSideBuy,   submitted_quantity,
+        TimeInForceDay, submitted_price,
+        NULL,           NULL,
+        NULL,           NULL,
+        NULL,           NULL,
+        NULL,
+      };
+      lb_decimal_free(submitted_price);
+      lb_decimal_free(submitted_quantity);
+      lb_trade_context_submit_order(ctx, &opts, on_submit_order, NULL);
+    }
+
+    static void
+    on_open_url(const char* url, void* userdata)
+    {
+      printf("Open this URL to authorize: %s\n", url);
+    }
+
+    int
+    main(int argc, char const* argv[])
+    {
+    #ifdef WIN32
+      SetConsoleOutputCP(CP_UTF8);
+    #endif
+
+      lb_oauth_new("your-client-id", 0, on_open_url, NULL, on_oauth_ready, NULL);
+      getchar();
+      return 0;
+    }
+    ```
+  </Tab>
+  <Tab title="C++">
+    ```cpp
+    #include <longbridge.h>
+    #include <cstdio>
+    #ifdef _WIN32
+    #include <windows.h>
+    #endif
+
+    static void
+    on_submit_order(const lb_async_result_t* res)
+    {
+      if (res->error) {
+        std::printf("failed to submit order: %s\n", lb_error_message(res->error));
+        return;
+      }
+      auto* resp = static_cast<const lb_submit_order_response_t*>(res->data);
+      std::printf("order id: %s\n", resp->order_id);
+    }
+
+    static void
+    on_oauth_ready(const lb_async_result_t* res)
+    {
+      if (res->error) { std::printf("OAuth failed: %s\n", lb_error_message(res->error)); return; }
+
+      auto* oauth  = static_cast<lb_oauth_t*>(res->data);
+      auto* config = lb_config_from_oauth(oauth);
+      auto* ctx    = lb_trade_context_new(config);
+      lb_config_free(config);
+      lb_oauth_free(oauth);
+
+      auto* price    = lb_decimal_from_double(50.0);
+      auto* quantity = lb_decimal_from_double(200.0);
+      lb_submit_order_options_t opts = {
+        "700.HK", OrderTypeLO, OrderSideBuy, quantity,
+        TimeInForceDay, price, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr,
+      };
+      lb_decimal_free(price);
+      lb_decimal_free(quantity);
+      lb_trade_context_submit_order(ctx, &opts, on_submit_order, nullptr);
+    }
+
+    int main()
+    {
+    #ifdef _WIN32
+      SetConsoleOutputCP(CP_UTF8);
+    #endif
+      lb_oauth_new("your-client-id", 0,
+                   [](const char* url, void*) { std::printf("Authorize: %s\n", url); },
+                   nullptr, on_oauth_ready, nullptr);
+      std::getchar();
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  All SDK calls return immediately. Results are delivered on a background thread via the callback. Use `getchar()` or another blocking mechanism in `main` to keep the process alive until your callbacks have run.
+</Note>
+
+## Environment variable reference
+
+| Variable | Description |
+|----------|-------------|
+| `LONGBRIDGE_APP_KEY` | App Key from user center |
+| `LONGBRIDGE_APP_SECRET` | App Secret from user center |
+| `LONGBRIDGE_ACCESS_TOKEN` | Access Token from user center |
+| `LONGBRIDGE_LANGUAGE` | Response language: `zh-CN`, `zh-HK`, or `en` (default: `en`) |
+| `LONGBRIDGE_HTTP_URL` | HTTP endpoint (default: `https://openapi.longbridge.com`) |
+| `LONGBRIDGE_QUOTE_WS_URL` | Quote WebSocket endpoint (default: `wss://openapi-quote.longbridge.com/v2`) |
+| `LONGBRIDGE_TRADE_WS_URL` | Trade WebSocket endpoint (default: `wss://openapi-trade.longbridge.com/v2`) |
+| `LONGBRIDGE_ENABLE_OVERNIGHT` | Enable overnight quotes: `true` or `false` (default: `false`) |
+| `LONGBRIDGE_PUSH_CANDLESTICK_MODE` | Candlestick push mode: `realtime` or `confirmed` (default: `realtime`) |
+| `LONGBRIDGE_LOG_PATH` | Path for SDK log files (default: no logs) |
+
+## Troubleshooting
+
+- On Windows, `setx` requires opening a new terminal. Use `set` to apply variables in the current `cmd.exe` session.
+- If callbacks are never called, ensure `main` blocks after the initial call (e.g. with `getchar()`).
+- On Linux/macOS, ensure `ncurses` is installed if your build links it (examples may require it).
+- Set `LONGBRIDGE_LOG_PATH` to a writable directory to enable SDK debug logs.
+- The header `longbridge.h` is auto-generated by `cbindgen` — do not edit it manually. Rebuild the C crate with `cargo build -p longbridge-c` to regenerate it after Rust changes.

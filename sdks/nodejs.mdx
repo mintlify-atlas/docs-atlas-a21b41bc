@@ -1,0 +1,203 @@
+---
+title: "Longbridge OpenAPI SDK for Node.js"
+description: "Install the Node.js SDK, authenticate with OAuth 2.0 or API keys, and fetch real-time quotes and submit trade orders from Longbridge OpenAPI."
+keywords: ["longbridge", "nodejs", "javascript", "sdk", "openapi", "quote", "trade", "npm"]
+---
+
+The `longbridge` npm package wraps the native Rust extension via NAPI-RS, exposing a Promise-based API for Node.js 10 and later. All context methods are `async` — use `await` or `.then()` as normal.
+
+<Info>
+  Full API reference is available at [longbridge.github.io/openapi/nodejs](https://longbridge.github.io/openapi/nodejs/index.html).
+</Info>
+
+## Setup
+
+<Steps>
+  <Step title="Install the package">
+    ```bash
+    npm install longbridge
+    ```
+  </Step>
+
+  <Step title="Authenticate">
+    The SDK supports two methods. OAuth 2.0 is recommended — no HMAC signatures required and tokens refresh automatically.
+
+    **OAuth 2.0**
+
+    Register an OAuth client to obtain a `client_id`:
+
+    <CodeGroup>
+
+    ```bash macOS / Linux
+    curl -X POST https://openapi.longbridge.com/oauth2/register \
+      -H "Content-Type: application/json" \
+      -d '{
+        "client_name": "My Application",
+        "redirect_uris": ["http://localhost:60355/callback"],
+        "grant_types": ["authorization_code", "refresh_token"]
+      }'
+    ```
+
+    ```powershell Windows
+    Invoke-RestMethod -Method Post -Uri https://openapi.longbridge.com/oauth2/register `
+      -ContentType "application/json" `
+      -Body '{
+        "client_name": "My Application",
+        "redirect_uris": ["http://localhost:60355/callback"],
+        "grant_types": ["authorization_code", "refresh_token"]
+      }'
+    ```
+
+    </CodeGroup>
+
+    The response contains your `client_id`. Pass it to `OAuth.build`. On first run the SDK opens a browser authorization page; on subsequent runs it loads and refreshes the cached token from `~/.longbridge/openapi/tokens/<client_id>` automatically.
+
+    ```javascript
+    const { OAuth, Config } = require('longbridge');
+
+    async function main() {
+      const oauth = await OAuth.build(
+        "your-client-id",
+        (_, url) => console.log("Open this URL to authorize: " + url)
+      );
+      const config = Config.fromOAuth(oauth);
+      // Use config to create contexts...
+    }
+
+    main();
+    ```
+
+    **Legacy API key**
+
+    Set three environment variables from your Longbridge user center:
+
+    <CodeGroup>
+
+    ```bash macOS / Linux
+    export LONGBRIDGE_APP_KEY="App Key get from user center"
+    export LONGBRIDGE_APP_SECRET="App Secret get from user center"
+    export LONGBRIDGE_ACCESS_TOKEN="Access Token get from user center"
+    ```
+
+    ```powershell Windows
+    setx LONGBRIDGE_APP_KEY "App Key get from user center"
+    setx LONGBRIDGE_APP_SECRET "App Secret get from user center"
+    setx LONGBRIDGE_ACCESS_TOKEN "Access Token get from user center"
+    ```
+
+    </CodeGroup>
+
+    Then load them with `Config.fromApikeyEnv()`:
+
+    ```javascript
+    const { Config } = require('longbridge');
+    const config = Config.fromApikeyEnv();
+    ```
+  </Step>
+</Steps>
+
+## Quote API — fetch quotes
+
+Pass an array of symbols to `ctx.quote` to retrieve current price data.
+
+```javascript
+const { OAuth, Config, QuoteContext } = require('longbridge');
+
+async function main() {
+  const oauth = await OAuth.build(
+    "your-client-id",
+    (_, url) => console.log("Open this URL to authorize: " + url)
+  );
+  const config = Config.fromOAuth(oauth);
+  const ctx = QuoteContext.new(config);
+  const resp = await ctx.quote(["700.HK", "AAPL.US", "TSLA.US", "NFLX.US"]);
+  for (let obj of resp) {
+    console.log(obj.toString());
+  }
+}
+
+main();
+```
+
+## Quote API — subscribe to push events
+
+Register a callback with `setOnQuote`, then call `subscribe`. The process must keep running to receive events — Node.js exits once the event queue is empty.
+
+```javascript
+const { OAuth, Config, QuoteContext, SubType } = require('longbridge');
+
+async function main() {
+  const oauth = await OAuth.build(
+    "your-client-id",
+    (_, url) => console.log("Open this URL to authorize: " + url)
+  );
+  const config = Config.fromOAuth(oauth);
+  const ctx = QuoteContext.new(config);
+  ctx.setOnQuote((_, event) => console.log(event.toString()));
+  await ctx.subscribe(
+    ["700.HK", "AAPL.US", "TSLA.US", "NFLX.US"],
+    [SubType.Quote],
+  );
+}
+
+main();
+```
+
+<Note>
+  Node.js exits when the event queue drains. Because the WebSocket connection keeps the event loop alive, the script above will continue receiving push events indefinitely. If you add no other I/O, the process will stay running.
+</Note>
+
+## Trade API — submit an order
+
+```javascript
+const {
+  OAuth,
+  Config,
+  TradeContext,
+  Decimal,
+  OrderSide,
+  TimeInForceType,
+  OrderType,
+} = require('longbridge');
+
+async function main() {
+  const oauth = await OAuth.build(
+    "your-client-id",
+    (_, url) => console.log("Open this URL to authorize: " + url)
+  );
+  const config = Config.fromOAuth(oauth);
+  const ctx = TradeContext.new(config);
+  const resp = await ctx.submitOrder({
+    symbol: "700.HK",
+    orderType: OrderType.LO,
+    side: OrderSide.Buy,
+    timeInForce: TimeInForceType.Day,
+    submittedPrice: new Decimal("50"),
+    submittedQuantity: new Decimal(200),
+  });
+  console.log(resp.toString());
+}
+
+main();
+```
+
+## Environment variable reference
+
+| Variable | Description |
+|----------|-------------|
+| `LONGBRIDGE_APP_KEY` | App Key from user center |
+| `LONGBRIDGE_APP_SECRET` | App Secret from user center |
+| `LONGBRIDGE_ACCESS_TOKEN` | Access Token from user center |
+| `LONGBRIDGE_LANGUAGE` | Response language: `zh-CN`, `zh-HK`, or `en` (default: `en`) |
+| `LONGBRIDGE_HTTP_URL` | HTTP endpoint (default: `https://openapi.longbridge.com`) |
+| `LONGBRIDGE_QUOTE_WS_URL` | Quote WebSocket endpoint (default: `wss://openapi-quote.longbridge.com/v2`) |
+| `LONGBRIDGE_TRADE_WS_URL` | Trade WebSocket endpoint (default: `wss://openapi-trade.longbridge.com/v2`) |
+| `LONGBRIDGE_ENABLE_OVERNIGHT` | Enable overnight quotes: `true` or `false` (default: `false`) |
+| `LONGBRIDGE_PUSH_CANDLESTICK_MODE` | Candlestick push mode: `realtime` or `confirmed` (default: `realtime`) |
+| `LONGBRIDGE_LOG_PATH` | Path for SDK log files (default: no logs) |
+
+## Troubleshooting
+
+- On Windows, `setx` requires opening a new terminal. Use `set` to apply variables in the current `cmd.exe` session.
+- If the script exits before you receive push events, ensure there is an active I/O operation keeping the Node.js event loop alive.
+- Set `LONGBRIDGE_LOG_PATH` to a writable directory to enable SDK debug logs.

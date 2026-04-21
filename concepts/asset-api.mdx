@@ -1,0 +1,164 @@
+---
+title: "Asset API: Positions, Balances, and Cash Flow"
+description: "Query account statements and download links using AssetContext, which provides a lightweight HTTP-only client for account document operations."
+keywords: ["longbridge", "asset", "AssetContext", "statement", "account", "positions", "cash flow", "fund positions", "stock positions"]
+---
+
+`AssetContext` provides access to account document data via HTTPS. Unlike `QuoteContext` and `TradeContext`, it does not maintain a WebSocket connection — all calls are straightforward HTTP requests. Account balance and position data is also available through `TradeContext`; `AssetContext` is specifically for statement and document operations.
+
+<Note>
+  Account balance, stock positions, fund positions, and cash flow are accessible through `TradeContext`. See the [Trade API](/concepts/trade-api) page for those methods. `AssetContext` covers statement list and download operations.
+</Note>
+
+## Creating an AssetContext
+
+Pass an `Arc<Config>` (Rust) or `Config` (Python, Node.js) to the constructor. No receiver tuple is returned — `AssetContext` is HTTP-only.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from longbridge.openapi import Config, AssetContext
+
+    config = Config.from_apikey_env()
+    ctx = AssetContext(config)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use std::sync::Arc;
+    use longbridge::{Config, AssetContext};
+
+    let config = Arc::new(Config::from_apikey_env()?);
+    let ctx = AssetContext::new(config);
+    ```
+  </Tab>
+</Tabs>
+
+## Methods
+
+### statements(options)
+
+Returns a paginated list of account statement records. Use `GetStatementListOptions` to set the time range and pagination cursor.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    import datetime
+    from longbridge.openapi import AssetContext, Config, GetStatementListOptions
+
+    config = Config.from_apikey_env()
+    ctx = AssetContext(config)
+    opts = GetStatementListOptions(
+        datetime.datetime(2023, 1, 1, tzinfo=datetime.timezone.utc),
+        datetime.datetime(2023, 6, 30, tzinfo=datetime.timezone.utc),
+    )
+    resp = ctx.statements(opts)
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use std::sync::Arc;
+    use longbridge::{
+        Config, AssetContext,
+        asset::GetStatementListOptions,
+    };
+    use time::macros::datetime;
+
+    #[tokio::main]
+    async fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Arc::new(Config::from_apikey_env()?);
+        let ctx = AssetContext::new(config);
+
+        let opts = GetStatementListOptions::new(
+            datetime!(2023-01-01 0:00 UTC),
+            datetime!(2023-06-30 0:00 UTC),
+        );
+        let resp = ctx.statements(opts).await?;
+        println!("{:?}", resp);
+        Ok(())
+    }
+    ```
+  </Tab>
+</Tabs>
+
+The response includes statement entries and a cursor for fetching the next page.
+
+### statement_download_url(options)
+
+Returns a pre-signed download URL for a specific statement file.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from longbridge.openapi import GetStatementOptions
+
+    opts = GetStatementOptions("statement-file-id")
+    resp = ctx.statement_download_url(opts)
+    print(resp.url)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use longbridge::asset::GetStatementOptions;
+
+    let opts = GetStatementOptions::new("statement-file-id");
+    let resp = ctx.statement_download_url(opts).await?;
+    println!("{}", resp.url);
+    ```
+  </Tab>
+</Tabs>
+
+## Account balance and positions via TradeContext
+
+For real-time balance, position, and cash flow queries, use `TradeContext` directly:
+
+| Method | Description |
+|---|---|
+| `account_balance(currency)` | Total equity, cash, buying power, and frozen cash |
+| `stock_positions(opts)` | Stock positions with quantity, cost basis, and market value |
+| `fund_positions(opts)` | Fund positions with net asset value and held units |
+| `cash_flow(opts)` | Cash flow records for a time range |
+
+```python
+from longbridge.openapi import Config, TradeContext
+
+config = Config.from_apikey_env()
+ctx = TradeContext(config)
+
+# Account balance
+balance = ctx.account_balance(currency=None)
+print(balance)
+
+# Stock positions
+positions = ctx.stock_positions()
+print(positions)
+
+# Fund positions
+funds = ctx.fund_positions()
+print(funds)
+
+# Cash flow for a date range
+import datetime
+from longbridge.openapi import GetCashFlowOptions
+
+opts = GetCashFlowOptions(
+    datetime.datetime(2022, 5, 9, tzinfo=datetime.timezone.utc),
+    datetime.datetime(2022, 5, 12, tzinfo=datetime.timezone.utc),
+)
+flow = ctx.cash_flow(opts)
+print(flow)
+```
+
+Each `AccountBalance` includes `total_cash`, `net_assets`, `buying_power`, `frozen_cash`, and per-currency `cash_infos`. Stock position entries include `symbol`, `quantity`, `available_quantity`, `cost_price`, and `market` fields. Fund positions include `symbol`, `current_net_asset_value`, `holding_units`, and `cost_net_asset_value`.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Trade API" icon="arrow-right-arrow-left" href="/concepts/trade-api">
+    Submit orders and query executions using TradeContext.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/concepts/configuration">
+    Learn about Config builder options including language and endpoint overrides.
+  </Card>
+</CardGroup>

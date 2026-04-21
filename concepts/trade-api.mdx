@@ -1,0 +1,415 @@
+---
+title: "Trade API: Submit, Amend, and Query Orders"
+description: "Use TradeContext to submit, replace, and cancel orders; query orders and executions; check account balance and estimate maximum purchase quantity."
+keywords: ["longbridge", "trade", "TradeContext", "submit order", "cancel order", "replace order", "executions", "account balance", "order history"]
+---
+
+`TradeContext` covers all order lifecycle and account operations. It connects to the Longbridge trade WebSocket server for order push notifications and uses HTTPS for the order management and account endpoints. This page documents every method on `TradeContext`.
+
+## Creating a TradeContext
+
+Pass an `Arc<Config>` (Rust) or `Config` (Python, Node.js) to the constructor. In Rust the constructor returns a `(TradeContext, Receiver<PushEvent>)` tuple; use the receiver to receive order status change events.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from longbridge.openapi import Config, TradeContext
+
+    config = Config.from_apikey_env()
+    ctx = TradeContext(config)
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    const { Config, TradeContext } = require('longbridge');
+
+    const config = Config.fromApikeyEnv();
+    const ctx = TradeContext.new(config);
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use std::sync::Arc;
+    use longbridge::{Config, TradeContext};
+
+    let config = Arc::new(Config::from_apikey_env()?);
+    let (ctx, mut receiver) = TradeContext::new(config);
+    ```
+  </Tab>
+</Tabs>
+
+## Order management
+
+### submit_order(opts)
+
+Submits a new order. The required fields are `symbol`, `order_type`, `side`, `submitted_quantity`, and `time_in_force`. Additional optional fields depend on the order type.
+
+<ParamField body="symbol" type="string" required>
+  Security symbol, e.g. `700.HK` or `AAPL.US`.
+</ParamField>
+
+<ParamField body="order_type" type="OrderType" required>
+  Order type. Common values: `LO` (Limit Order), `MO` (Market Order), `ELO` (Enhanced Limit Order), `ALO` (At-auction Limit Order), `LIT` (Limit If Touched), `MIT` (Market If Touched).
+</ParamField>
+
+<ParamField body="side" type="OrderSide" required>
+  Order side: `Buy` or `Sell`.
+</ParamField>
+
+<ParamField body="submitted_quantity" type="Decimal" required>
+  Number of shares to buy or sell.
+</ParamField>
+
+<ParamField body="time_in_force" type="TimeInForceType" required>
+  Time in force: `Day`, `GoodTilCanceled`, or `GoodTilDate`.
+</ParamField>
+
+<ParamField body="submitted_price" type="Decimal">
+  Limit price. Required for limit order types (`LO`, `ELO`, `ALO`).
+</ParamField>
+
+<ParamField body="trigger_price" type="Decimal">
+  Trigger price for conditional orders (`LIT`, `MIT`).
+</ParamField>
+
+<ParamField body="limit_offset" type="Decimal">
+  Limit offset for Trailing Limit If Touched orders (`TSLPAMT`, `TSLPPCT`).
+</ParamField>
+
+<ParamField body="trailing_amount" type="Decimal">
+  Trailing amount for trailing orders.
+</ParamField>
+
+<ParamField body="trailing_percent" type="Decimal">
+  Trailing percentage for trailing percent orders.
+</ParamField>
+
+<ParamField body="expire_date" type="Date">
+  Expiry date for `GoodTilDate` orders.
+</ParamField>
+
+<ParamField body="outside_rth" type="OutsideRTH">
+  Whether the order can execute outside regular trading hours.
+</ParamField>
+
+<ParamField body="remark" type="string">
+  Free-text note attached to the order, up to 64 characters.
+</ParamField>
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from decimal import Decimal
+    from longbridge.openapi import TradeContext, Config, OrderType, OrderSide, TimeInForceType
+
+    config = Config.from_apikey_env()
+    ctx = TradeContext(config)
+    resp = ctx.submit_order(
+        "700.HK", OrderType.LO, OrderSide.Buy,
+        Decimal("500"), TimeInForceType.Day,
+        submitted_price=Decimal("50"),
+        remark="Hello from Python SDK",
+    )
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    const {
+      Config, TradeContext, Decimal,
+      OrderSide, TimeInForceType, OrderType,
+    } = require('longbridge');
+
+    async function main() {
+      const config = Config.fromApikeyEnv();
+      const ctx = TradeContext.new(config);
+      const resp = await ctx.submitOrder({
+        symbol: "700.HK",
+        orderType: OrderType.LO,
+        side: OrderSide.Buy,
+        timeInForce: TimeInForceType.Day,
+        submittedPrice: new Decimal("50"),
+        submittedQuantity: new Decimal(500),
+        remark: "Hello from Node.js SDK",
+      });
+      console.log(resp.toString());
+    }
+
+    main();
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use std::sync::Arc;
+    use longbridge::{
+        decimal,
+        trade::{OrderSide, OrderType, SubmitOrderOptions, TimeInForceType},
+        Config, TradeContext,
+    };
+
+    #[tokio::main]
+    async fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Arc::new(Config::from_apikey_env()?);
+        let (ctx, _) = TradeContext::new(config);
+
+        let opts = SubmitOrderOptions::new(
+            "700.HK",
+            OrderType::LO,
+            OrderSide::Buy,
+            decimal!(500),
+            TimeInForceType::Day,
+        )
+        .submitted_price(decimal!(50i32))
+        .remark("Hello from Rust SDK".to_string());
+
+        let resp = ctx.submit_order(opts).await?;
+        println!("{:?}", resp);
+        Ok(())
+    }
+    ```
+  </Tab>
+</Tabs>
+
+The response contains the assigned `order_id` string.
+
+### replace_order(opts)
+
+Amends an existing unfilled or partially-filled order. You must supply the `order_id` and the new `quantity`. You can optionally update the price and other fields.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from decimal import Decimal
+    from longbridge.openapi import ReplaceOrderOptions
+
+    opts = ReplaceOrderOptions("709043056541253632", Decimal("100")).price(Decimal("300"))
+    ctx.replace_order(opts)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use longbridge::{decimal, trade::ReplaceOrderOptions};
+
+    let opts = ReplaceOrderOptions::new("709043056541253632", decimal!(100))
+        .price(decimal!(300i32));
+    ctx.replace_order(opts).await?;
+    ```
+  </Tab>
+</Tabs>
+
+### cancel_order(order_id)
+
+Cancels an order by its ID. The call returns `Ok(())` / `None` on success.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    ctx.cancel_order("709043056541253632")
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    await ctx.cancelOrder("709043056541253632");
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    ctx.cancel_order("709043056541253632").await?;
+    ```
+  </Tab>
+</Tabs>
+
+## Order queries
+
+### today_orders(opts)
+
+Returns orders placed today. All filter options are optional.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from longbridge.openapi import GetTodayOrdersOptions, OrderStatus, OrderSide, Market
+
+    opts = (GetTodayOrdersOptions()
+        .symbol("700.HK")
+        .status([OrderStatus.Filled, OrderStatus.New])
+        .side(OrderSide.Buy)
+        .market(Market.HK))
+    resp = ctx.today_orders(opts)
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    const resp = await ctx.todayOrders({ symbol: "700.HK" });
+    console.log(resp);
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use longbridge::trade::{GetTodayOrdersOptions, Market, OrderSide, OrderStatus};
+
+    let opts = GetTodayOrdersOptions::new()
+        .symbol("700.HK")
+        .status([OrderStatus::Filled, OrderStatus::New])
+        .side(OrderSide::Buy)
+        .market(Market::HK);
+    let resp = ctx.today_orders(opts).await?;
+    println!("{:?}", resp);
+    ```
+  </Tab>
+</Tabs>
+
+### history_orders(opts)
+
+Returns historical orders. Supports the same filters as `today_orders` plus `start_at` and `end_at` datetime bounds.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    import datetime
+    from longbridge.openapi import GetHistoryOrdersOptions, OrderStatus, OrderSide, Market
+
+    opts = (GetHistoryOrdersOptions()
+        .symbol("700.HK")
+        .status([OrderStatus.Filled])
+        .side(OrderSide.Buy)
+        .market(Market.HK)
+        .start_at(datetime.datetime(2022, 5, 9, tzinfo=datetime.timezone.utc))
+        .end_at(datetime.datetime(2022, 5, 12, tzinfo=datetime.timezone.utc)))
+    resp = ctx.history_orders(opts)
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use longbridge::{
+        Market,
+        trade::{GetHistoryOrdersOptions, OrderSide, OrderStatus},
+    };
+    use time::macros::datetime;
+
+    let opts = GetHistoryOrdersOptions::new()
+        .symbol("700.HK")
+        .status([OrderStatus::Filled, OrderStatus::New])
+        .side(OrderSide::Buy)
+        .market(Market::HK)
+        .start_at(datetime!(2022-05-09 0:00 UTC))
+        .end_at(datetime!(2022-05-12 0:00 UTC));
+    let resp = ctx.history_orders(opts).await?;
+    println!("{:?}", resp);
+    ```
+  </Tab>
+</Tabs>
+
+## Execution queries
+
+### today_executions(opts)
+
+Returns fills (executions) from today's session. Optionally filter by `symbol` or `order_id`.
+
+```python
+from longbridge.openapi import GetTodayExecutionsOptions
+
+resp = ctx.today_executions(GetTodayExecutionsOptions().symbol("700.HK"))
+print(resp)
+```
+
+### history_executions(opts)
+
+Returns historical fills. Supports `symbol`, `order_id`, `start_at`, and `end_at` filters.
+
+```python
+import datetime
+from longbridge.openapi import GetHistoryExecutionsOptions
+
+opts = (GetHistoryExecutionsOptions()
+    .symbol("700.HK")
+    .start_at(datetime.datetime(2022, 5, 9, tzinfo=datetime.timezone.utc))
+    .end_at(datetime.datetime(2022, 5, 12, tzinfo=datetime.timezone.utc)))
+resp = ctx.history_executions(opts)
+print(resp)
+```
+
+## Account queries
+
+### account_balance(currency)
+
+Returns account balance information. Pass a currency code (e.g. `"HKD"`, `"USD"`) to filter; pass `None` to retrieve all currencies.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    resp = ctx.account_balance(currency=None)
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    const resp = await ctx.accountBalance();
+    console.log(resp);
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    let resp = ctx.account_balance(None).await?;
+    println!("{:?}", resp);
+    ```
+  </Tab>
+</Tabs>
+
+Each `AccountBalance` entry includes total equity, cash, buying power, frozen cash, and per-currency sub-accounts.
+
+### estimate_max_purchase_quantity(opts)
+
+Returns the estimated maximum quantity you can buy for a given symbol, order type, and side, based on your available cash and margin limits.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from longbridge.openapi import EstimateMaxPurchaseQuantityOptions, OrderType, OrderSide
+
+    resp = ctx.estimate_max_purchase_quantity(
+        EstimateMaxPurchaseQuantityOptions("700.HK", OrderType.LO, OrderSide.Buy)
+    )
+    print(resp)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use longbridge::trade::{EstimateMaxPurchaseQuantityOptions, OrderSide, OrderType};
+
+    let resp = ctx
+        .estimate_max_purchase_quantity(EstimateMaxPurchaseQuantityOptions::new(
+            "700.HK",
+            OrderType::LO,
+            OrderSide::Buy,
+        ))
+        .await?;
+    println!("{:?}", resp);
+    ```
+  </Tab>
+</Tabs>
+
+<ResponseField name="cash_max_qty" type="Decimal">
+  Maximum purchasable quantity using available cash.
+</ResponseField>
+
+<ResponseField name="margin_max_qty" type="Decimal">
+  Maximum purchasable quantity using available margin.
+</ResponseField>
+
+## Order push notifications
+
+`TradeContext` also delivers real-time order status change events. In Python, register a callback with `set_on_order_changed`. In Rust, consume events from the receiver returned by `TradeContext::new`. See [Real-time subscriptions](/concepts/realtime-subscriptions) for details.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Asset API" icon="file-invoice" href="/concepts/asset-api">
+    Query account statements and download statement files.
+  </Card>
+  <Card title="Real-time subscriptions" icon="bolt" href="/concepts/realtime-subscriptions">
+    Receive order status push events over WebSocket.
+  </Card>
+</CardGroup>

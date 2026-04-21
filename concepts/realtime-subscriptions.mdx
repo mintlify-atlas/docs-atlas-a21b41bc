@@ -1,0 +1,262 @@
+---
+title: "Real-Time Subscriptions: WebSocket Push Events"
+description: "Subscribe to live quote updates, depth changes, and trade ticks over WebSocket using QuoteContext, and receive order push events via TradeContext."
+keywords: ["longbridge", "subscribe", "websocket", "push", "real-time", "SubType", "SubFlags", "PushQuote", "quote events", "order push"]
+---
+
+The Longbridge SDK maintains persistent WebSocket connections that deliver push events as market data changes. You subscribe to specific symbols and event types; the server sends updates as they occur without you needing to poll. This page covers the subscription API for both quote events (via `QuoteContext`) and order status events (via `TradeContext`).
+
+<Warning>
+  Your process must stay running to receive push events. If the script exits, the WebSocket connection closes and no further events are delivered. Keep the process alive with a receiver loop (Rust) or a `sleep` / event loop (Python, Node.js).
+</Warning>
+
+## Quote subscriptions
+
+### subscribe(symbols, sub_types)
+
+Subscribes to one or more push event types for the given symbols. After this call, the server sends matching events to your receiver or callback.
+
+**SubType / SubFlags values:**
+
+| Value | Description |
+|---|---|
+| `Quote` | Real-time price quote updates (last done, bid, ask, volume) |
+| `Depth` | Order book depth changes (level-2 ask/bid updates) |
+| `Brokers` | Broker queue updates per price level |
+| `Trade` | Trade tick events (each individual fill reported by the exchange) |
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from time import sleep
+    from longbridge.openapi import Config, QuoteContext, SubType, PushQuote
+
+    config = Config.from_apikey_env()
+
+    def on_quote(symbol: str, event: PushQuote):
+        print(symbol, event)
+
+    ctx = QuoteContext(config)
+    ctx.set_on_quote(on_quote)
+    ctx.subscribe(["700.HK"], [SubType.Quote])
+    sleep(30)
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    const { Config, QuoteContext, SubType } = require('longbridge');
+
+    async function main() {
+      const config = Config.fromApikeyEnv();
+      const ctx = QuoteContext.new(config);
+      ctx.setOnQuote((_, event) => console.log(event.toString()));
+      await ctx.subscribe(
+        ["700.HK", "AAPL.US"],
+        [SubType.Quote],
+      );
+      // Keep the process alive
+      await new Promise(() => {});
+    }
+
+    main();
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use std::sync::Arc;
+    use longbridge::{quote::SubFlags, Config, QuoteContext};
+
+    #[tokio::main]
+    async fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Arc::new(Config::from_apikey_env()?);
+        let (ctx, mut receiver) = QuoteContext::new(config);
+
+        ctx.subscribe(["700.HK"], SubFlags::QUOTE).await?;
+
+        while let Some(event) = receiver.recv().await {
+            println!("{:?}", event);
+        }
+        Ok(())
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Subscribing to multiple types
+
+Combine multiple sub types in a single call. In Rust, combine flags with the `|` operator:
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from longbridge.openapi import Config, QuoteContext, SubType, PushDepth
+
+    config = Config.from_apikey_env()
+
+    def on_depth(symbol: str, event: PushDepth):
+        print(symbol, event)
+
+    ctx = QuoteContext(config)
+    ctx.set_on_depth(on_depth)
+    ctx.subscribe(["700.HK"], [SubType.Quote, SubType.Depth, SubType.Trade])
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use longbridge::quote::SubFlags;
+
+    ctx.subscribe(
+        ["700.HK", "AAPL.US"],
+        SubFlags::QUOTE | SubFlags::DEPTH | SubFlags::TRADE,
+    )
+    .await?;
+    ```
+  </Tab>
+</Tabs>
+
+### unsubscribe(symbols, sub_types)
+
+Removes the subscription for the given symbols and types. The server stops sending those events.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    ctx.unsubscribe(["AAPL.US"], [SubType.Quote])
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    ```javascript
+    await ctx.unsubscribe(["AAPL.US"], [SubType.Quote]);
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    ctx.unsubscribe(["AAPL.US"], SubFlags::QUOTE).await?;
+    ```
+  </Tab>
+</Tabs>
+
+### subscriptions()
+
+Returns a list of all currently active subscriptions, including the symbol and the set of active sub types for each.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    active = ctx.subscriptions()
+    print(active)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    let active = ctx.subscriptions().await?;
+    println!("{:?}", active);
+    ```
+  </Tab>
+</Tabs>
+
+## Candlestick subscriptions
+
+### subscribe_candlesticks(symbol, period, trade_sessions)
+
+Subscribes to real-time candlestick updates for a symbol and period. Push events are delivered according to the `push_candlestick_mode` set in your `Config` — either on every tick (`Realtime`) or only on bar close (`Confirmed`).
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from longbridge.openapi import Config, QuoteContext, Period, TradeSessions, PushCandlestick
+
+    config = Config.from_apikey_env()
+
+    def on_candlestick(symbol: str, event: PushCandlestick):
+        print(symbol, event)
+
+    ctx = QuoteContext(config)
+    ctx.set_on_candlestick(on_candlestick)
+    ctx.subscribe_candlesticks("AAPL.US", Period.OneMinute, TradeSessions.Intraday)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use longbridge::quote::{Period, TradeSessions};
+
+    ctx.subscribe_candlesticks("AAPL.US", Period::OneMinute, TradeSessions::Intraday)
+        .await?;
+    ```
+  </Tab>
+</Tabs>
+
+To stop receiving candlestick updates call `unsubscribe_candlesticks(symbol, period)`.
+
+## Push callbacks (Python and Node.js)
+
+In Python and Node.js, push events are delivered to registered callbacks. Each push type has its own setter:
+
+| Callback setter | Event type | Triggered by |
+|---|---|---|
+| `set_on_quote` | `PushQuote` | `SubType.Quote` |
+| `set_on_depth` | `PushDepth` | `SubType.Depth` |
+| `set_on_brokers` | `PushBrokers` | `SubType.Brokers` |
+| `set_on_trades` | `PushTrades` | `SubType.Trade` |
+| `set_on_candlestick` | `PushCandlestick` | `subscribe_candlesticks` |
+
+Callbacks receive the symbol as the first argument and the event object as the second.
+
+## Order push notifications
+
+`TradeContext` delivers order status change events over its own WebSocket connection. Register with `set_on_order_changed` in Python or consume from the Rust receiver:
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from time import sleep
+    from longbridge.openapi import Config, TradeContext, TopicType
+
+    config = Config.from_apikey_env()
+
+    def on_order_changed(event):
+        print(event)
+
+    ctx = TradeContext(config)
+    ctx.set_on_order_changed(on_order_changed)
+    ctx.subscribe([TopicType.Private])
+    sleep(30)
+    ```
+  </Tab>
+  <Tab title="Rust">
+    ```rust
+    use std::sync::Arc;
+    use longbridge::{Config, TradeContext, trade::TopicType};
+
+    #[tokio::main]
+    async fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Arc::new(Config::from_apikey_env()?);
+        let (ctx, mut receiver) = TradeContext::new(config);
+
+        ctx.subscribe([TopicType::Private]).await?;
+
+        while let Some(event) = receiver.recv().await {
+            println!("{:?}", event);
+        }
+        Ok(())
+    }
+    ```
+  </Tab>
+</Tabs>
+
+Order push events include the order ID, status, filled quantity, filled price, and other order fields.
+
+## Reconnection behavior
+
+The SDK automatically reconnects WebSocket connections after a network interruption and re-subscribes to all previously active subscriptions. You do not need to resubscribe after a reconnect.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quote API" icon="chart-line" href="/concepts/quote-api">
+    Pull market data snapshots using QuoteContext.
+  </Card>
+  <Card title="Trade API" icon="arrow-right-arrow-left" href="/concepts/trade-api">
+    Submit orders and receive order status events.
+  </Card>
+</CardGroup>
